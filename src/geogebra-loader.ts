@@ -271,8 +271,8 @@ export async function mountGeoGebraApplet(
 export const mountGeoGebraIframe = mountGeoGebraApplet;
 
 function createWebviewElement(): ElectronWebview | null {
-	// Electron custom element; createEl typings only cover standard HTML tags.
-	const el = document.createElement("webview") as ElectronWebview;
+	// Electron <webview>; cast because createEl typings only list standard HTML tags.
+	const el = createEl("webview" as keyof HTMLElementTagNameMap) as unknown as ElectronWebview;
 	if (el.tagName.toUpperCase() !== "WEBVIEW") {
 		return null;
 	}

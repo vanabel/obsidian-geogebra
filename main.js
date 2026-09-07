@@ -281,7 +281,7 @@ async function mountGeoGebraApplet(container, options, ctx) {
   };
 }
 function createWebviewElement() {
-  const el = document.createElement("webview");
+  const el = createEl("webview");
   if (el.tagName.toUpperCase() !== "WEBVIEW") {
     return null;
   }
@@ -617,11 +617,107 @@ var GeoGebraView = class extends import_obsidian3.FileView {
 
 // src/settings-tab.ts
 var import_obsidian4 = require("obsidian");
+var APP_NAME_OPTIONS = {
+  classic: "Classic",
+  graphing: "Graphing",
+  geometry: "Geometry",
+  "3d": "3D Calculator",
+  suite: "Calculator Suite"
+};
 var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
+  /** Obsidian 1.13+: searchable declarative settings (skips display when non-empty). */
+  getSettingDefinitions() {
+    return [
+      {
+        name: "Default height",
+        desc: "Applet height in pixels",
+        control: {
+          type: "number",
+          key: "height",
+          min: 1,
+          placeholder: "500",
+          defaultValue: DEFAULT_SETTINGS.height
+        }
+      },
+      {
+        name: "App type",
+        desc: "Default GeoGebra app when opening .ggb files",
+        control: {
+          type: "dropdown",
+          key: "appName",
+          options: APP_NAME_OPTIONS,
+          defaultValue: DEFAULT_SETTINGS.appName
+        }
+      },
+      {
+        name: "Show toolbar",
+        control: { type: "toggle", key: "showToolBar" }
+      },
+      {
+        name: "Show algebra input",
+        control: { type: "toggle", key: "showAlgebraInput" }
+      },
+      {
+        name: "Show menu bar",
+        control: { type: "toggle", key: "showMenuBar" }
+      },
+      {
+        name: "Enable right-click",
+        control: { type: "toggle", key: "enableRightClick" }
+      },
+      {
+        name: "Enable shift-drag zoom",
+        control: { type: "toggle", key: "enableShiftDragZoom" }
+      },
+      {
+        name: "Show reset icon",
+        control: { type: "toggle", key: "showResetIcon" }
+      },
+      {
+        name: "Attachment folder",
+        desc: "Vault-relative folder used when dropping external .ggb files",
+        control: {
+          type: "text",
+          key: "attachmentFolder",
+          placeholder: "GeoGebra",
+          defaultValue: DEFAULT_SETTINGS.attachmentFolder
+        }
+      },
+      {
+        name: "Prefer wiki embed on drop",
+        desc: "Insert ![[file.ggb]] instead of a geogebra code block",
+        control: { type: "toggle", key: "preferWikiEmbed" }
+      },
+      {
+        name: "deployggb.js URL",
+        desc: "CDN or self-hosted GeoGebra loader script",
+        control: {
+          type: "text",
+          key: "deployScriptUrl",
+          placeholder: DEFAULT_SETTINGS.deployScriptUrl,
+          defaultValue: DEFAULT_SETTINGS.deployScriptUrl
+        }
+      }
+    ];
+  }
+  async setControlValue(key, value) {
+    if (key === "attachmentFolder") {
+      this.plugin.settings.attachmentFolder = String(value ?? "").trim() || DEFAULT_SETTINGS.attachmentFolder;
+      await this.plugin.saveSettings();
+      return;
+    }
+    if (key === "deployScriptUrl") {
+      this.plugin.settings.deployScriptUrl = String(value ?? "").trim() || DEFAULT_SETTINGS.deployScriptUrl;
+      await this.plugin.saveSettings();
+      return;
+    }
+    await super.setControlValue(key, value);
+  }
+  /** Fallback for Obsidian before 1.13.0 */
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -635,14 +731,7 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     new import_obsidian4.Setting(containerEl).setName("App type").setDesc("Default GeoGebra app when opening .ggb files").addDropdown((dropdown) => {
-      const options = {
-        classic: "Classic",
-        graphing: "Graphing",
-        geometry: "Geometry",
-        "3d": "3D Calculator",
-        suite: "Calculator Suite"
-      };
-      dropdown.addOptions(options);
+      dropdown.addOptions(APP_NAME_OPTIONS);
       dropdown.setValue(this.plugin.settings.appName);
       dropdown.onChange(async (value) => {
         this.plugin.settings.appName = value;
@@ -687,7 +776,7 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
     );
     new import_obsidian4.Setting(containerEl).setName("Attachment folder").setDesc("Vault-relative folder used when dropping external .ggb files").addText(
       (text) => text.setPlaceholder("GeoGebra").setValue(this.plugin.settings.attachmentFolder).onChange(async (value) => {
-        this.plugin.settings.attachmentFolder = value.trim() || "GeoGebra";
+        this.plugin.settings.attachmentFolder = value.trim() || DEFAULT_SETTINGS.attachmentFolder;
         await this.plugin.saveSettings();
       })
     );
@@ -698,8 +787,8 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     new import_obsidian4.Setting(containerEl).setName("deployggb.js URL").setDesc("CDN or self-hosted GeoGebra loader script").addText(
-      (text) => text.setPlaceholder("https://www.geogebra.org/apps/deployggb.js").setValue(this.plugin.settings.deployScriptUrl).onChange(async (value) => {
-        this.plugin.settings.deployScriptUrl = value.trim() || "https://www.geogebra.org/apps/deployggb.js";
+      (text) => text.setPlaceholder(DEFAULT_SETTINGS.deployScriptUrl).setValue(this.plugin.settings.deployScriptUrl).onChange(async (value) => {
+        this.plugin.settings.deployScriptUrl = value.trim() || DEFAULT_SETTINGS.deployScriptUrl;
         await this.plugin.saveSettings();
       })
     );
