@@ -715,7 +715,9 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
       await this.plugin.saveSettings();
       return;
     }
-    await super.setControlValue(key, value);
+    if ((0, import_obsidian4.requireApiVersion)("1.13.0")) {
+      await super.setControlValue(key, value);
+    }
   }
   /** Fallback for Obsidian before 1.13.0 */
   display() {

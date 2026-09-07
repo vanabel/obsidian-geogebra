@@ -1,4 +1,10 @@
-import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
+import {
+	App,
+	PluginSettingTab,
+	Setting,
+	requireApiVersion,
+	type SettingDefinitionItem,
+} from "obsidian";
 import type GeoGebraPlugin from "./main";
 import { DEFAULT_SETTINGS, type GeoGebraPluginSettings } from "./settings";
 
@@ -107,7 +113,9 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 			await this.plugin.saveSettings();
 			return;
 		}
-		await super.setControlValue(key, value);
+		if (requireApiVersion("1.13.0")) {
+			await super.setControlValue(key, value);
+		}
 	}
 
 	/** Fallback for Obsidian before 1.13.0 */
