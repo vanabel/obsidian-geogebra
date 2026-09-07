@@ -1,0 +1,6 @@
+node_modules/
+main.js.map
+data.json
+.runtime/
+.DS_Store
+*.js.map
