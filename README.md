@@ -2,15 +2,35 @@
 
 在 Obsidian 笔记中直接嵌入并交互 `.ggb` 文件，无需先上传到 GeoGebra 网站。
 
-## 功能
+> **桌面端专用**（依赖 Electron `webview`）。首次加载需能访问 `https://www.geogebra.org`。
 
-- 拖入 / 粘贴 `.ggb` → 自动保存到库并插入嵌入
-- `![[demo.ggb]]` 维基嵌入（阅读视图 / 实时预览）
-- ` ```geogebra ` 代码块（可调高度、工具栏等）
-- 双击打开 `.ggb` 文件，在专用视图中交互
-- 也可嵌入已发布的 `material_id`
+## 安装
 
-## 本地安装（开发测试）
+### 手动安装（推荐）
+
+1. 打开 [Releases](https://github.com/vanabel/obsidian-geogebra/releases)，下载最新版的：
+   - `obsidian-geogebra-x.y.z.zip`，**或**
+   - `main.js`、`manifest.json`、`styles.css` 三个文件
+2. 解压 / 复制到你的库：
+
+```text
+你的库/.obsidian/plugins/obsidian-geogebra/
+```
+
+3. Obsidian → 设置 → 社区插件 → 关闭安全模式 → 刷新 → 启用 **GeoGebra**。
+
+### 用 BRAT
+
+1. 安装社区插件 [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+2. BRAT → Add Beta plugin → 填入：
+
+```text
+https://github.com/vanabel/obsidian-geogebra
+```
+
+3. 启用 **GeoGebra**
+
+### 从源码构建
 
 1. 构建插件：
 
@@ -36,8 +56,6 @@ ln -s "/绝对路径/obsidian-geogebra" \
 
 3. 打开 Obsidian → 设置 → 社区插件 → 关闭安全模式 → 启用 **GeoGebra**。
 
-4. 首次加载 applet 需要能访问 `https://www.geogebra.org`（加载 `deployggb.js`）。
-
 开发时可改用：
 
 ```bash
@@ -45,6 +63,14 @@ npm run dev
 ```
 
 改代码后会自动重新打包 `main.js`，在 Obsidian 里用「重新加载应用」或禁用/启用插件即可。
+
+## 功能
+
+- 拖入 / 粘贴 `.ggb` → 自动保存到库并插入嵌入
+- `![[demo.ggb]]` 维基嵌入（阅读视图 / 实时预览）
+- ` ```geogebra ` 代码块（可调高度、工具栏等）
+- 双击打开 `.ggb` 文件，在专用视图中交互
+- 也可嵌入已发布的 `material_id`
 
 ## 用法
 

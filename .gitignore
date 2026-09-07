@@ -4,3 +4,4 @@ data.json
 .runtime/
 .DS_Store
 *.js.map
+*.zip
