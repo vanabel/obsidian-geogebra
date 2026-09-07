@@ -1,5 +1,6 @@
 import {
 	Editor,
+	MarkdownFileInfo,
 	MarkdownPostProcessorContext,
 	MarkdownView,
 	Notice,
@@ -62,18 +63,18 @@ export default class GeoGebraPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.workspace.on("editor-drop", (evt, editor, info) => {
-				this.onEditorDropOrPaste(evt, editor, info);
+				void this.onEditorDropOrPaste(evt, editor, info);
 			})
 		);
 		this.registerEvent(
 			this.app.workspace.on("editor-paste", (evt, editor, info) => {
-				this.onEditorDropOrPaste(evt, editor, info);
+				void this.onEditorDropOrPaste(evt, editor, info);
 			})
 		);
 
 		this.addCommand({
-			id: "insert-geogebra-block",
-			name: "Insert GeoGebra code block",
+			id: "insert-code-block",
+			name: "Insert code block",
 			editorCallback: (editor) => {
 				const snippet = [
 					"```ggb",
@@ -152,8 +153,8 @@ export default class GeoGebraPlugin extends Plugin {
 		this.registerMarkdownPostProcessor((el, ctx) => {
 			const embeds = el.querySelectorAll("span.internal-embed");
 			for (const span of Array.from(embeds)) {
-				if (!(span instanceof HTMLElement)) continue;
-				if (span.querySelector(".geogebra-iframe, .geogebra-status")) continue;
+				if (!span.instanceOf(HTMLElement)) continue;
+				if (span.querySelector(".geogebra-webview, .geogebra-status")) continue;
 
 				const src = (span.getAttribute("src") ?? "").split("|")[0].trim();
 				if (!src.toLowerCase().endsWith(".ggb")) continue;
@@ -180,15 +181,16 @@ export default class GeoGebraPlugin extends Plugin {
 	private onEditorDropOrPaste(
 		evt: DragEvent | ClipboardEvent,
 		editor: Editor,
-		info: MarkdownView | unknown
+		info: MarkdownView | MarkdownFileInfo
 	): void {
+		if (evt.defaultPrevented) return;
+		if (!this.eventHasGgb(evt)) return;
+
 		if (this.settings.preferWikiEmbed) {
-			if (!this.eventHasGgb(evt)) return;
 			this.scheduleEmbedPromotion(editor);
 			return;
 		}
 
-		if (!this.eventHasGgb(evt)) return;
 		evt.preventDefault();
 		void this.insertCodeBlocksFromEvent(evt, editor, info);
 	}
@@ -222,7 +224,7 @@ export default class GeoGebraPlugin extends Plugin {
 	private async insertCodeBlocksFromEvent(
 		evt: DragEvent | ClipboardEvent,
 		editor: Editor,
-		info: MarkdownView | unknown
+		info: MarkdownView | MarkdownFileInfo
 	): Promise<void> {
 		const sourcePath =
 			info instanceof MarkdownView ? (info.file?.path ?? "") : "";

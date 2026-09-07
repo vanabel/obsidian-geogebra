@@ -40,8 +40,8 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 		await this.render();
 	}
 
-	async onload(): Promise<void> {
-		await this.render();
+	onload(): void {
+		void this.render();
 	}
 
 	onunload(): void {
@@ -57,7 +57,7 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 
 		this.containerEl.empty();
 		this.containerEl.addClass("geogebra-embed");
-		this.containerEl.style.display = "block";
+		this.containerEl.addClass("geogebra-embed-fixed");
 
 		const height = parseHeightHint(
 			this.containerEl,
@@ -66,8 +66,7 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 				settings: this.plugin.settings,
 			})
 		);
-		this.containerEl.style.height = `${height}px`;
-		this.containerEl.style.minHeight = `${height}px`;
+		this.containerEl.setCssProps({ "--geogebra-height": `${height}px` });
 
 		const status = this.containerEl.createDiv({ cls: "geogebra-status" });
 		status.setText("正在加载 GeoGebra…");

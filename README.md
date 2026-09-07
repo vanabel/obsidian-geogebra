@@ -1,10 +1,14 @@
 # GeoGebra for Obsidian
 
-在 Obsidian 笔记中直接嵌入并交互 `.ggb` 文件，无需先上传到 GeoGebra 网站。
+Embed interactive local GeoGebra (`.ggb`) constructions in Obsidian notes without uploading them to GeoGebra.org.
+
+**Desktop only** (requires Electron `webview`). Loading the applet needs network access to `https://www.geogebra.org`.
+
+在 Obsidian 笔记中直接嵌入并交互本地 `.ggb` 文件，无需先上传到 GeoGebra 网站。
 
 > **桌面端专用**（依赖 Electron `webview`）。首次加载需能访问 `https://www.geogebra.org`。
 
-## 安装
+## Install / 安装
 
 > 插件 id 为 `geogebra`，安装目录必须是 `.obsidian/plugins/geogebra/`。  
 > 若你之前装过 `obsidian-geogebra` 目录，请删掉旧目录后按下面重装（设置不会自动迁移）。

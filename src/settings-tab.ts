@@ -13,7 +13,8 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl("h2", { text: "GeoGebra" });
+
+		new Setting(containerEl).setName("GeoGebra").setHeading();
 
 		new Setting(containerEl)
 			.setName("Default height")

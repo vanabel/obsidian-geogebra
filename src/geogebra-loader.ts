@@ -17,11 +17,8 @@ import { stripWikiTarget } from "./settings";
  *
  * Sizing (evidence-based, not guessed):
  * 1. Electron webview docs require `display:inline-flex` with explicit width/height.
- *    Overwriting with `display:block` leaves guest content at a small default size
- *    in the top-left of a large host box:
  *    https://www.electronjs.org/docs/latest/api/webview-tag
- * 2. GeoGebra Apps API: after inject, call `ggbApplet.setSize(w, h)` from the
- *    container's offsetWidth/offsetHeight (official resize path):
+ * 2. GeoGebra Apps API: `ggbApplet.setSize(w, h)` from the container box.
  *    https://geogebra.github.io/docs/reference/en/GeoGebra_Apps_API/
  */
 
@@ -68,25 +65,10 @@ export function resolveGgbFile(
 	const byPath = app.vault.getAbstractFileByPath(normalizePath(name));
 	if (byPath instanceof TFile) return byPath;
 
-	const base = name.split("/").pop() ?? name;
-	const stem = base.replace(/\.ggb$/i, "");
-	const matches = app.vault
-		.getFiles()
-		.filter(
-			(file) =>
-				file.extension.toLowerCase() === "ggb" &&
-				(file.name === base || file.basename === stem)
-		);
-
-	if (matches.length === 1) return matches[0];
-	if (matches.length > 1) {
-		const nearby = matches.find((file) =>
-			sourcePath.startsWith(file.parent?.path ? `${file.parent.path}/` : "")
-		);
-		return nearby ?? matches[0];
-	}
-
-	throw new Error(`找不到文件: ${raw}`);
+	// Prefer an explicit vault path over scanning the whole vault.
+	throw new Error(
+		`找不到文件: ${raw}（请使用库内完整路径，例如 GeoGebra/demo.ggb）`
+	);
 }
 
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -137,24 +119,18 @@ export async function mountGeoGebraApplet(
 
 	container.empty();
 	container.addClass("geogebra-embed");
-	container.style.display = "block";
-	container.style.width = "100%";
-	container.style.position = "relative";
-	container.style.background = "#fff";
-	container.style.overflow = "hidden";
 	if (options.fillContainer) {
-		container.style.height = "100%";
+		container.addClass("geogebra-embed-fill");
+		container.removeClass("geogebra-embed-fixed");
+		container.setCssProps({ "--geogebra-height": "100%" });
 	} else {
-		container.style.height = `${height}px`;
-		container.style.minHeight = `${height}px`;
+		container.addClass("geogebra-embed-fixed");
+		container.removeClass("geogebra-embed-fill");
+		container.setCssProps({ "--geogebra-height": `${height}px` });
 	}
 
-	const status = container.createDiv({ cls: "geogebra-status" });
+	const status = container.createDiv({ cls: "geogebra-status geogebra-status-overlay" });
 	status.setText("正在加载 GeoGebra…");
-	status.style.position = "absolute";
-	status.style.inset = "0";
-	status.style.zIndex = "2";
-	status.style.pointerEvents = "none";
 
 	const webview = createWebviewElement();
 	if (!webview) {
@@ -163,7 +139,7 @@ export async function mountGeoGebraApplet(
 		);
 	}
 
-	webview.className = "geogebra-webview";
+	webview.addClass("geogebra-webview");
 	webview.setAttribute("allowpopups", "");
 	webview.setAttribute(
 		"webpreferences",
@@ -172,7 +148,9 @@ export async function mountGeoGebraApplet(
 	container.appendChild(webview);
 
 	await new Promise<void>((resolve) =>
-		requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+		window.requestAnimationFrame(() =>
+			window.requestAnimationFrame(() => resolve())
+		)
 	);
 
 	const measure = (): { w: number; h: number } => {
@@ -198,14 +176,10 @@ export async function mountGeoGebraApplet(
 	 * Never use display:block — guest content then fails to fill the host box.
 	 */
 	const applyWebviewBox = (w: number, h: number) => {
-		webview.style.display = "inline-flex";
-		webview.style.position = "absolute";
-		webview.style.left = "0";
-		webview.style.top = "0";
-		webview.style.border = "0";
-		webview.style.background = "#fff";
-		webview.style.width = `${w}px`;
-		webview.style.height = `${h}px`;
+		webview.setCssProps({
+			"--geogebra-webview-width": `${w}px`,
+			"--geogebra-webview-height": `${h}px`,
+		});
 	};
 
 	let { w: boxW, h: boxH } = measure();
@@ -297,6 +271,7 @@ export async function mountGeoGebraApplet(
 export const mountGeoGebraIframe = mountGeoGebraApplet;
 
 function createWebviewElement(): ElectronWebview | null {
+	// Electron custom element; createEl typings only cover standard HTML tags.
 	const el = document.createElement("webview") as ElectronWebview;
 	if (el.tagName.toUpperCase() !== "WEBVIEW") {
 		return null;
@@ -343,55 +318,61 @@ async function writeRuntimeHtml(
 	adapter: FileSystemAdapter,
 	html: string
 ): Promise<{ fileUrl: string; cleanup: () => void }> {
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const path = require("path") as typeof import("path");
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const fs = require("fs") as typeof import("fs");
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const { pathToFileURL } = require("url") as typeof import("url");
-
 	const pluginDirName = plugin.manifest.dir;
 	if (!pluginDirName) {
 		throw new Error("无法解析插件目录（manifest.dir 为空）");
 	}
-	const pluginDir = path.join(adapter.getBasePath(), pluginDirName);
-	const runtimeDir = path.join(pluginDir, ".runtime");
-	fs.mkdirSync(runtimeDir, { recursive: true });
+
+	const runtimeDir = normalizePath(`${pluginDirName}/.runtime`);
+	try {
+		await adapter.mkdir(runtimeDir);
+	} catch {
+		// Directory may already exist.
+	}
 
 	const fileName = `ggb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`;
-	const filePath = path.join(runtimeDir, fileName);
-	fs.writeFileSync(filePath, html, "utf8");
+	const relativePath = normalizePath(`${runtimeDir}/${fileName}`);
+	await adapter.write(relativePath, html);
 
 	try {
-		const files = fs
-			.readdirSync(runtimeDir)
-			.filter((name) => name.startsWith("ggb-") && name.endsWith(".html"))
-			.map((name) => ({
-				name,
-				mtime: fs.statSync(path.join(runtimeDir, name)).mtimeMs,
-			}))
-			.sort((a, b) => b.mtime - a.mtime);
-		for (const stale of files.slice(20)) {
+		const listed = await adapter.list(runtimeDir);
+		const stale = listed.files
+			.filter((name) => {
+				const base = name.split("/").pop() ?? name;
+				return base.startsWith("ggb-") && base.endsWith(".html");
+			})
+			.sort()
+			.reverse()
+			.slice(20);
+		for (const path of stale) {
 			try {
-				fs.unlinkSync(path.join(runtimeDir, stale.name));
+				await adapter.remove(path);
 			} catch {
 				// ignore
 			}
 		}
 	} catch {
-		// ignore
+		// ignore pruning failures
 	}
 
+	const absolutePath = adapter.getFullPath(relativePath);
 	return {
-		fileUrl: pathToFileURL(filePath).href,
+		fileUrl: pathToFileUrl(absolutePath),
 		cleanup: () => {
-			try {
-				fs.unlinkSync(filePath);
-			} catch {
-				// ignore
-			}
+			void adapter.remove(relativePath).catch(() => undefined);
 		},
 	};
+}
+
+/** Build a file:// URL without importing Node's url module. */
+function pathToFileUrl(absolutePath: string): string {
+	const normalized = absolutePath.replace(/\\/g, "/");
+	const prefixed = /^[A-Za-z]:\//.test(normalized)
+		? `/${normalized}`
+		: normalized.startsWith("/")
+			? normalized
+			: `/${normalized}`;
+	return `file://${encodeURI(prefixed).replace(/#/g, "%23")}`;
 }
 
 function buildMaterialEmbedUrl(

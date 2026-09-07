@@ -121,19 +121,9 @@ function resolveGgbFile(app, raw, sourcePath) {
   if (fromLink instanceof import_obsidian.TFile) return fromLink;
   const byPath = app.vault.getAbstractFileByPath((0, import_obsidian.normalizePath)(name));
   if (byPath instanceof import_obsidian.TFile) return byPath;
-  const base = name.split("/").pop() ?? name;
-  const stem = base.replace(/\.ggb$/i, "");
-  const matches = app.vault.getFiles().filter(
-    (file) => file.extension.toLowerCase() === "ggb" && (file.name === base || file.basename === stem)
+  throw new Error(
+    `\u627E\u4E0D\u5230\u6587\u4EF6: ${raw}\uFF08\u8BF7\u4F7F\u7528\u5E93\u5185\u5B8C\u6574\u8DEF\u5F84\uFF0C\u4F8B\u5982 GeoGebra/demo.ggb\uFF09`
   );
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) {
-    const nearby = matches.find(
-      (file) => sourcePath.startsWith(file.parent?.path ? `${file.parent.path}/` : "")
-    );
-    return nearby ?? matches[0];
-  }
-  throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6: ${raw}`);
 }
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -168,30 +158,24 @@ async function mountGeoGebraApplet(container, options, ctx) {
   const height = resolvedHeight(options);
   container.empty();
   container.addClass("geogebra-embed");
-  container.style.display = "block";
-  container.style.width = "100%";
-  container.style.position = "relative";
-  container.style.background = "#fff";
-  container.style.overflow = "hidden";
   if (options.fillContainer) {
-    container.style.height = "100%";
+    container.addClass("geogebra-embed-fill");
+    container.removeClass("geogebra-embed-fixed");
+    container.setCssProps({ "--geogebra-height": "100%" });
   } else {
-    container.style.height = `${height}px`;
-    container.style.minHeight = `${height}px`;
+    container.addClass("geogebra-embed-fixed");
+    container.removeClass("geogebra-embed-fill");
+    container.setCssProps({ "--geogebra-height": `${height}px` });
   }
-  const status = container.createDiv({ cls: "geogebra-status" });
+  const status = container.createDiv({ cls: "geogebra-status geogebra-status-overlay" });
   status.setText("\u6B63\u5728\u52A0\u8F7D GeoGebra\u2026");
-  status.style.position = "absolute";
-  status.style.inset = "0";
-  status.style.zIndex = "2";
-  status.style.pointerEvents = "none";
   const webview = createWebviewElement();
   if (!webview) {
     throw new Error(
       "\u5F53\u524D Obsidian \u672A\u542F\u7528 Electron webview\u3002\u8BF7\u4F7F\u7528\u684C\u9762\u7248 Obsidian\uFF08\u4E0E Excalidraw \u5916\u94FE\u5D4C\u5165\u76F8\u540C\u4F9D\u8D56\uFF09\u3002"
     );
   }
-  webview.className = "geogebra-webview";
+  webview.addClass("geogebra-webview");
   webview.setAttribute("allowpopups", "");
   webview.setAttribute(
     "webpreferences",
@@ -199,7 +183,9 @@ async function mountGeoGebraApplet(container, options, ctx) {
   );
   container.appendChild(webview);
   await new Promise(
-    (resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    (resolve) => window.requestAnimationFrame(
+      () => window.requestAnimationFrame(() => resolve())
+    )
   );
   const measure = () => {
     const w = Math.max(
@@ -217,14 +203,10 @@ async function mountGeoGebraApplet(container, options, ctx) {
     return { w, h };
   };
   const applyWebviewBox = (w, h) => {
-    webview.style.display = "inline-flex";
-    webview.style.position = "absolute";
-    webview.style.left = "0";
-    webview.style.top = "0";
-    webview.style.border = "0";
-    webview.style.background = "#fff";
-    webview.style.width = `${w}px`;
-    webview.style.height = `${h}px`;
+    webview.setCssProps({
+      "--geogebra-webview-width": `${w}px`,
+      "--geogebra-webview-height": `${h}px`
+    });
   };
   let { w: boxW, h: boxH } = measure();
   applyWebviewBox(boxW, boxH);
@@ -331,41 +313,44 @@ function runCleanups(cleanups) {
   }
 }
 async function writeRuntimeHtml(plugin, adapter, html) {
-  const path = require("path");
-  const fs = require("fs");
-  const { pathToFileURL } = require("url");
   const pluginDirName = plugin.manifest.dir;
   if (!pluginDirName) {
     throw new Error("\u65E0\u6CD5\u89E3\u6790\u63D2\u4EF6\u76EE\u5F55\uFF08manifest.dir \u4E3A\u7A7A\uFF09");
   }
-  const pluginDir = path.join(adapter.getBasePath(), pluginDirName);
-  const runtimeDir = path.join(pluginDir, ".runtime");
-  fs.mkdirSync(runtimeDir, { recursive: true });
-  const fileName = `ggb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`;
-  const filePath = path.join(runtimeDir, fileName);
-  fs.writeFileSync(filePath, html, "utf8");
+  const runtimeDir = (0, import_obsidian.normalizePath)(`${pluginDirName}/.runtime`);
   try {
-    const files = fs.readdirSync(runtimeDir).filter((name) => name.startsWith("ggb-") && name.endsWith(".html")).map((name) => ({
-      name,
-      mtime: fs.statSync(path.join(runtimeDir, name)).mtimeMs
-    })).sort((a, b) => b.mtime - a.mtime);
-    for (const stale of files.slice(20)) {
+    await adapter.mkdir(runtimeDir);
+  } catch {
+  }
+  const fileName = `ggb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`;
+  const relativePath = (0, import_obsidian.normalizePath)(`${runtimeDir}/${fileName}`);
+  await adapter.write(relativePath, html);
+  try {
+    const listed = await adapter.list(runtimeDir);
+    const stale = listed.files.filter((name) => {
+      const base = name.split("/").pop() ?? name;
+      return base.startsWith("ggb-") && base.endsWith(".html");
+    }).sort().reverse().slice(20);
+    for (const path of stale) {
       try {
-        fs.unlinkSync(path.join(runtimeDir, stale.name));
+        await adapter.remove(path);
       } catch {
       }
     }
   } catch {
   }
+  const absolutePath = adapter.getFullPath(relativePath);
   return {
-    fileUrl: pathToFileURL(filePath).href,
+    fileUrl: pathToFileUrl(absolutePath),
     cleanup: () => {
-      try {
-        fs.unlinkSync(filePath);
-      } catch {
-      }
+      void adapter.remove(relativePath).catch(() => void 0);
     }
   };
+}
+function pathToFileUrl(absolutePath) {
+  const normalized = absolutePath.replace(/\\/g, "/");
+  const prefixed = /^[A-Za-z]:\//.test(normalized) ? `/${normalized}` : normalized.startsWith("/") ? normalized : `/${normalized}`;
+  return `file://${encodeURI(prefixed).replace(/#/g, "%23")}`;
 }
 function buildMaterialEmbedUrl(materialId, width, height, options) {
   const { settings } = options;
@@ -502,8 +487,8 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
     }
     await this.render();
   }
-  async onload() {
-    await this.render();
+  onload() {
+    void this.render();
   }
   onunload() {
     this.generation += 1;
@@ -516,7 +501,7 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
     this.mounted = null;
     this.containerEl.empty();
     this.containerEl.addClass("geogebra-embed");
-    this.containerEl.style.display = "block";
+    this.containerEl.addClass("geogebra-embed-fixed");
     const height = parseHeightHint(
       this.containerEl,
       resolvedHeight({
@@ -524,8 +509,7 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
         settings: this.plugin.settings
       })
     );
-    this.containerEl.style.height = `${height}px`;
-    this.containerEl.style.minHeight = `${height}px`;
+    this.containerEl.setCssProps({ "--geogebra-height": `${height}px` });
     const status = this.containerEl.createDiv({ cls: "geogebra-status" });
     status.setText("\u6B63\u5728\u52A0\u8F7D GeoGebra\u2026");
     try {
@@ -641,7 +625,7 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "GeoGebra" });
+    new import_obsidian4.Setting(containerEl).setName("GeoGebra").setHeading();
     new import_obsidian4.Setting(containerEl).setName("Default height").setDesc("Applet height in pixels").addText(
       (text) => text.setPlaceholder("500").setValue(String(this.plugin.settings.height)).onChange(async (value) => {
         const n = Number(value);
@@ -748,17 +732,17 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     this.registerReadingFallback();
     this.registerEvent(
       this.app.workspace.on("editor-drop", (evt, editor, info) => {
-        this.onEditorDropOrPaste(evt, editor, info);
+        void this.onEditorDropOrPaste(evt, editor, info);
       })
     );
     this.registerEvent(
       this.app.workspace.on("editor-paste", (evt, editor, info) => {
-        this.onEditorDropOrPaste(evt, editor, info);
+        void this.onEditorDropOrPaste(evt, editor, info);
       })
     );
     this.addCommand({
-      id: "insert-geogebra-block",
-      name: "Insert GeoGebra code block",
+      id: "insert-code-block",
+      name: "Insert code block",
       editorCallback: (editor) => {
         const snippet = [
           "```ggb",
@@ -818,8 +802,8 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     this.registerMarkdownPostProcessor((el, ctx) => {
       const embeds = el.querySelectorAll("span.internal-embed");
       for (const span of Array.from(embeds)) {
-        if (!(span instanceof HTMLElement)) continue;
-        if (span.querySelector(".geogebra-iframe, .geogebra-status")) continue;
+        if (!span.instanceOf(HTMLElement)) continue;
+        if (span.querySelector(".geogebra-webview, .geogebra-status")) continue;
         const src = (span.getAttribute("src") ?? "").split("|")[0].trim();
         if (!src.toLowerCase().endsWith(".ggb")) continue;
         const file = this.app.metadataCache.getFirstLinkpathDest(
@@ -840,12 +824,12 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     });
   }
   onEditorDropOrPaste(evt, editor, info) {
+    if (evt.defaultPrevented) return;
+    if (!this.eventHasGgb(evt)) return;
     if (this.settings.preferWikiEmbed) {
-      if (!this.eventHasGgb(evt)) return;
       this.scheduleEmbedPromotion(editor);
       return;
     }
-    if (!this.eventHasGgb(evt)) return;
     evt.preventDefault();
     void this.insertCodeBlocksFromEvent(evt, editor, info);
   }
