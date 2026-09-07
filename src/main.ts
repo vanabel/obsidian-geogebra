@@ -38,8 +38,16 @@ interface DragManager {
 	} | null;
 }
 
+/** Open applet that can remount after settings change (no Obsidian reload). */
+export interface LiveGeoGebraApplet {
+	remount: () => void | Promise<void>;
+}
+
 export default class GeoGebraPlugin extends Plugin {
 	settings: GeoGebraPluginSettings = DEFAULT_SETTINGS;
+	/** Open GeoGebra views / embeds that should remount when settings change. */
+	private readonly liveApplets = new Set<LiveGeoGebraApplet>();
+	private refreshLiveTimer: number | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -101,18 +109,72 @@ export default class GeoGebraPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new GeoGebraSettingTab(this.app, this));
+		this.register(() => {
+			if (this.refreshLiveTimer != null) {
+				window.clearTimeout(this.refreshLiveTimer);
+				this.refreshLiveTimer = null;
+			}
+			this.liveApplets.clear();
+		});
+	}
+
+	/** Register an open applet; returns unregister for Component.register(). */
+	registerLiveApplet(applet: LiveGeoGebraApplet): () => void {
+		this.liveApplets.add(applet);
+		return () => {
+			this.liveApplets.delete(applet);
+		};
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<GeoGebraPluginSettings>
-		);
+		const loaded = (await this.loadData()) as Partial<GeoGebraPluginSettings>;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+		if (
+			this.settings.showAlgebraView !== "auto" &&
+			this.settings.showAlgebraView !== "show" &&
+			this.settings.showAlgebraView !== "hide"
+		) {
+			this.settings.showAlgebraView = DEFAULT_SETTINGS.showAlgebraView;
+		}
+		if (typeof this.settings.allowStyleBar !== "boolean") {
+			this.settings.allowStyleBar = DEFAULT_SETTINGS.allowStyleBar;
+		}
+		if (typeof this.settings.showSaveButton !== "boolean") {
+			this.settings.showSaveButton = DEFAULT_SETTINGS.showSaveButton;
+		}
 	}
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+		this.scheduleRefreshLiveApplets();
+	}
+
+	/** After settings mutate outside saveSettings (e.g. declarative setControlValue). */
+	notifySettingsChanged(): void {
+		this.scheduleRefreshLiveApplets();
+	}
+
+	private scheduleRefreshLiveApplets(): void {
+		if (this.refreshLiveTimer != null) {
+			window.clearTimeout(this.refreshLiveTimer);
+		}
+		this.refreshLiveTimer = window.setTimeout(() => {
+			this.refreshLiveTimer = null;
+			void this.refreshLiveApplets();
+		}, 150);
+	}
+
+	private async refreshLiveApplets(): Promise<void> {
+		const targets = [...this.liveApplets];
+		await Promise.all(
+			targets.map(async (applet) => {
+				try {
+					await applet.remount();
+				} catch (error) {
+					console.error("GeoGebra: remount after settings change failed", error);
+				}
+			})
+		);
 	}
 
 	private mountCodeBlock(

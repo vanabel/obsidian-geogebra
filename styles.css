@@ -69,6 +69,53 @@ span.internal-embed.geogebra-embed,
 	color: var(--text-error);
 }
 
+/* Webview fills the embed; host chrome sits above it. */
+.geogebra-stage {
+	position: absolute;
+	inset: 0;
+}
+
+/*
+ * Reset + Save: vertical column on the graphics top-right,
+ * under GeoGebra's built-in show/hide style-bar control.
+ */
+.geogebra-side-actions {
+	position: absolute;
+	top: 110px;
+	right: 6px;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+	pointer-events: none;
+}
+
+.geogebra-side-actions .geogebra-action-btn {
+	pointer-events: auto;
+	padding: 4px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	line-height: 1.2;
+	white-space: nowrap;
+	cursor: pointer;
+	box-shadow: var(--shadow-s);
+	opacity: 0.92;
+}
+
+.geogebra-side-actions .geogebra-action-btn:hover {
+	opacity: 1;
+	background: var(--background-modifier-hover);
+}
+
+.geogebra-side-actions .geogebra-action-btn:disabled {
+	cursor: wait;
+	opacity: 0.7;
+}
+
 .geogebra-file-view {
 	padding: 0;
 	height: 100%;

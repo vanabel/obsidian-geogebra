@@ -42,16 +42,28 @@ var DEFAULT_SETTINGS = {
   appName: "classic",
   showToolBar: true,
   showAlgebraInput: true,
+  showAlgebraView: "auto",
   showMenuBar: false,
-  enableRightClick: true,
+  allowStyleBar: true,
+  enableRightClick: false,
   enableShiftDragZoom: true,
   showResetIcon: true,
+  showSaveButton: true,
   attachmentFolder: "GeoGebra",
   deployScriptUrl: "https://www.geogebra.org/apps/deployggb.js",
   preferWikiEmbed: true
 };
 function stripWikiTarget(value) {
   return value.trim().replace(/^!/, "").replace(/^\[\[/, "").replace(/\]\]$/, "").split("|")[0].split("#")[0].trim();
+}
+function parseBool(value) {
+  return value.toLowerCase() !== "false" && value !== "0";
+}
+function parseAlgebraView(value) {
+  const v = value.trim().toLowerCase();
+  if (v === "auto" || v === "default" || v === "file" || v === "") return "auto";
+  if (v === "false" || v === "0" || v === "off" || v === "hide") return "hide";
+  return "show";
 }
 function parseGeoGebraBlock(source) {
   const result = {};
@@ -92,15 +104,26 @@ function parseGeoGebraBlock(source) {
         break;
       case "toolbar":
       case "showtoolbar":
-        result.showToolBar = value.toLowerCase() !== "false";
+        result.showToolBar = parseBool(value);
         break;
       case "algebra":
+      case "algebrainput":
       case "showalgebrainput":
-        result.showAlgebraInput = value.toLowerCase() !== "false";
+        result.showAlgebraInput = parseBool(value);
+        break;
+      case "algebraview":
+      case "showalgebraview":
+      case "algebra_panel":
+        result.showAlgebraView = parseAlgebraView(value);
         break;
       case "menu":
       case "showmenubar":
-        result.showMenuBar = value.toLowerCase() !== "false";
+        result.showMenuBar = parseBool(value);
+        break;
+      case "stylebar":
+      case "allowstylebar":
+      case "showstylebar":
+        result.allowStyleBar = parseBool(value);
         break;
     }
   }
@@ -133,6 +156,15 @@ function arrayBufferToBase64(buffer) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+function base64ToArrayBuffer(b64) {
+  const cleaned = b64.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
+  const binary = atob(cleaned);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }
 function resolvedHeight(options) {
   return options.height ?? options.settings.height;
@@ -167,8 +199,15 @@ async function mountGeoGebraApplet(container, options, ctx) {
     container.removeClass("geogebra-embed-fill");
     container.setCssProps({ "--geogebra-height": `${height}px` });
   }
+  const canSave = Boolean(options.saveFile && options.settings.showSaveButton);
+  const hostOwnsReset = canSave;
+  const effectiveOptions = hostOwnsReset ? {
+    ...options,
+    settings: { ...options.settings, showResetIcon: false }
+  } : options;
   const status = container.createDiv({ cls: "geogebra-status geogebra-status-overlay" });
   status.setText("\u6B63\u5728\u52A0\u8F7D GeoGebra\u2026");
+  const stage = container.createDiv({ cls: "geogebra-stage" });
   const webview = createWebviewElement();
   if (!webview) {
     throw new Error(
@@ -181,24 +220,23 @@ async function mountGeoGebraApplet(container, options, ctx) {
     "webpreferences",
     "autoplayPolicy=document-user-activation-required"
   );
-  container.appendChild(webview);
+  stage.appendChild(webview);
   await new Promise(
     (resolve) => window.requestAnimationFrame(
       () => window.requestAnimationFrame(() => resolve())
     )
   );
   const measure = () => {
+    const box = stage;
     const w = Math.max(
-      Math.floor(
-        container.clientWidth || container.getBoundingClientRect().width
-      ),
+      Math.floor(box.clientWidth || box.getBoundingClientRect().width),
       320
     );
     const h = Math.max(
       Math.floor(
-        container.clientHeight || container.getBoundingClientRect().height || height
+        box.clientHeight || box.getBoundingClientRect().height || height
       ),
-      height
+      120
     );
     return { w, h };
   };
@@ -245,40 +283,177 @@ async function mountGeoGebraApplet(container, options, ctx) {
     window.setTimeout(() => syncSize(), 1e3);
   };
   const ro = new ResizeObserver(() => syncSize());
-  ro.observe(container);
+  ro.observe(stage);
   cleanups.push(() => ro.disconnect());
-  if (options.materialId && !options.ggbBase64) {
-    webview.src = buildMaterialEmbedUrl(
-      options.materialId,
-      boxW,
-      boxH,
-      options
+  const getBase64 = async () => {
+    if (revoked || !webview.isConnected) {
+      throw new Error("GeoGebra \u5DF2\u5378\u8F7D\uFF0C\u65E0\u6CD5\u5BFC\u51FA");
+    }
+    const result = await webview.executeJavaScript(
+      `(function () {
+  return new Promise(function (resolve, reject) {
+    try {
+      var api = window.ggbApplet;
+      if (!api || typeof api.getBase64 !== "function") {
+        reject(new Error("GeoGebra API \u5C1A\u672A\u5C31\u7EEA"));
+        return;
+      }
+      var done = false;
+      var finish = function (value) {
+        if (done) return;
+        done = true;
+        if (typeof value === "string" && value.length > 0) resolve(value);
+        else reject(new Error("getBase64 \u8FD4\u56DE\u4E3A\u7A7A"));
+      };
+      try {
+        api.getBase64(function (b64) { finish(b64); });
+      } catch (err) {
+        try {
+          finish(api.getBase64());
+        } catch (err2) {
+          reject(err2);
+        }
+      }
+      window.setTimeout(function () {
+        if (!done) reject(new Error("\u5BFC\u51FA .ggb \u8D85\u65F6"));
+      }, 20000);
+    } catch (e) {
+      reject(e);
+    }
+  });
+})()`,
+      true
     );
-    wireWebviewReady(webview, markReady, cleanups, () => revoked);
+    if (typeof result !== "string" || !result) {
+      throw new Error("\u65E0\u6CD5\u5BFC\u51FA\u5F53\u524D\u6784\u9020");
+    }
+    return result;
+  };
+  const reset = async () => {
+    if (revoked || !webview.isConnected) {
+      throw new Error("GeoGebra \u5DF2\u5378\u8F7D\uFF0C\u65E0\u6CD5\u91CD\u7F6E");
+    }
+    await webview.executeJavaScript(
+      `(function () {
+  var api = window.ggbApplet;
+  if (!api || typeof api.reset !== "function") {
+    throw new Error("GeoGebra API \u5C1A\u672A\u5C31\u7EEA");
+  }
+  api.reset();
+  return true;
+})()`,
+      true
+    );
+  };
+  const save = async () => {
+    const file = options.saveFile;
+    if (!file) {
+      throw new Error("\u5F53\u524D\u5D4C\u5165\u6CA1\u6709\u53EF\u5199\u5165\u7684\u672C\u5730 .ggb \u6587\u4EF6\uFF08\u8FDC\u7AEF material \u65E0\u6CD5\u76F4\u63A5\u8986\u76D6\uFF09");
+    }
+    const b64 = await getBase64();
+    const buffer = base64ToArrayBuffer(b64);
+    await ctx.plugin.app.vault.modifyBinary(file, buffer);
+  };
+  const attachSideActions = () => {
+    if (!canSave) return;
+    const actions = container.createDiv({ cls: "geogebra-side-actions" });
+    actions.setAttr(
+      "title",
+      "\u4F4D\u4E8E\u300C\u663E\u793A/\u9690\u85CF\u6837\u5F0F\u680F\u300D\u4E0B\u65B9\uFF1A\u91CD\u7F6E\u4E0E\u4FDD\u5B58"
+    );
+    const resetBtn = actions.createEl("button", {
+      cls: "geogebra-action-btn",
+      text: "\u91CD\u7F6E",
+      attr: {
+        type: "button",
+        title: "\u6062\u590D\u5230\u6253\u5F00\u65F6\u7684\u6784\u9020\uFF08\u4E0E GeoGebra \u91CD\u7F6E\u56FE\u6807\u76F8\u540C\uFF09"
+      }
+    });
+    const saveBtn = actions.createEl("button", {
+      cls: "geogebra-action-btn",
+      text: "\u4FDD\u5B58",
+      attr: {
+        type: "button",
+        title: `\u4FDD\u5B58\u5230 ${options.saveFile?.path ?? ".ggb"}`
+      }
+    });
+    let busy = false;
+    const run = (btn, label, work, okText, okNotice) => {
+      btn.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        if (busy) return;
+        busy = true;
+        resetBtn.disabled = true;
+        saveBtn.disabled = true;
+        btn.setText(`${label}\u4E2D\u2026`);
+        void (async () => {
+          try {
+            await work();
+            new import_obsidian.Notice(okNotice);
+            btn.setText(okText);
+            window.setTimeout(() => {
+              if (btn.isConnected) btn.setText(label);
+            }, 1200);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            new import_obsidian.Notice(`GeoGebra ${label}\u5931\u8D25: ${message}`);
+            btn.setText(label);
+          } finally {
+            busy = false;
+            if (resetBtn.isConnected) resetBtn.disabled = false;
+            if (saveBtn.isConnected) saveBtn.disabled = false;
+          }
+        })();
+      });
+    };
+    run(
+      resetBtn,
+      "\u91CD\u7F6E",
+      reset,
+      "\u5DF2\u91CD\u7F6E",
+      `GeoGebra: \u5DF2\u91CD\u7F6E ${options.saveFile?.name ?? ""}`
+    );
+    run(
+      saveBtn,
+      "\u4FDD\u5B58",
+      save,
+      "\u5DF2\u4FDD\u5B58",
+      `GeoGebra: \u5DF2\u4FDD\u5B58 ${options.saveFile?.name ?? ""}`
+    );
+  };
+  const finishMount = () => {
+    attachSideActions();
     return {
       el: webview,
+      getBase64,
+      save,
+      canSave,
       revoke: () => {
         revoked = true;
         runCleanups(cleanups);
         webview.remove();
       }
     };
+  };
+  if (effectiveOptions.materialId && !effectiveOptions.ggbBase64) {
+    webview.src = buildMaterialEmbedUrl(
+      effectiveOptions.materialId,
+      boxW,
+      boxH,
+      effectiveOptions
+    );
+    wireWebviewReady(webview, markReady, cleanups, () => revoked);
+    return finishMount();
   }
-  const html = buildAppletHtml(options, boxW, boxH);
+  const html = buildAppletHtml(effectiveOptions, boxW, boxH);
   const runtime = await writeRuntimeHtml(ctx.plugin, adapter, html);
   cleanups.push(runtime.cleanup);
   webview.src = runtime.fileUrl;
   wireWebviewReady(webview, markReady, cleanups, () => revoked);
   const safety = window.setTimeout(() => markReady(), 8e3);
   cleanups.push(() => window.clearTimeout(safety));
-  return {
-    el: webview,
-    revoke: () => {
-      revoked = true;
-      runCleanups(cleanups);
-      webview.remove();
-    }
-  };
+  return finishMount();
 }
 function createWebviewElement() {
   const el = createEl("webview");
@@ -361,6 +536,8 @@ function buildMaterialEmbedUrl(materialId, width, height, options) {
 }
 function buildAppletHtml(options, width, height) {
   const { settings } = options;
+  const showAlgebraView = options.showAlgebraView ?? settings.showAlgebraView;
+  const allowStyleBar = options.allowStyleBar ?? settings.allowStyleBar;
   const params = {
     appName: options.appName ?? settings.appName,
     width,
@@ -368,12 +545,14 @@ function buildAppletHtml(options, width, height) {
     showToolBar: options.showToolBar ?? settings.showToolBar,
     showAlgebraInput: options.showAlgebraInput ?? settings.showAlgebraInput,
     showMenuBar: options.showMenuBar ?? settings.showMenuBar,
+    allowStyleBar,
     enableRightClick: settings.enableRightClick,
     enableShiftDragZoom: settings.enableShiftDragZoom,
+    enableLabelDrags: true,
     showResetIcon: settings.showResetIcon,
+    errorDialogsActive: true,
     language: "zh",
     preventFocus: false,
-    borderColor: null,
     autoHeight: false
   };
   if (options.ggbBase64) {
@@ -384,6 +563,8 @@ function buildAppletHtml(options, width, height) {
   }
   const scriptUrl = JSON.stringify(settings.deployScriptUrl);
   const paramsJson = JSON.stringify(params);
+  const algebraViewJson = JSON.stringify(showAlgebraView);
+  const enableRightClickJson = JSON.stringify(!!settings.enableRightClick);
   const fallbackW = JSON.stringify(width);
   const fallbackH = JSON.stringify(height);
   return `<!DOCTYPE html>
@@ -439,13 +620,34 @@ function buildAppletHtml(options, width, height) {
       }
     } catch (e) {}
   }
+  function applyUi(api) {
+    if (!api) return;
+    try {
+      if (typeof api.enableRightClick === "function") {
+        api.enableRightClick(${enableRightClickJson});
+      }
+    } catch (e) {}
+    var algebraView = ${algebraViewJson};
+    if (algebraView === "show" || algebraView === "hide") {
+      try {
+        if (typeof api.setPerspective === "function") {
+          api.setPerspective(algebraView === "show" ? "+A" : "-A");
+        } else if (typeof api.evalCommand === "function") {
+          api.evalCommand(algebraView === "show" ? 'SetPerspective("+A")' : 'SetPerspective("-A")');
+        }
+      } catch (e) {}
+    }
+  }
   try {
     var params = ${paramsJson};
     var initial = hostSize();
     params.width = Math.max(initial.w, ${fallbackW});
     params.height = Math.max(initial.h, ${fallbackH});
     params.appletOnLoad = function (api) {
+      applyUi(api);
       applySize(api);
+      window.setTimeout(function () { applyUi(api); applySize(api); }, 0);
+      window.setTimeout(function () { applyUi(api); applySize(api); }, 250);
       document.documentElement.setAttribute("data-ggb-ready", "1");
     };
     if (typeof GGBApplet !== "function") {
@@ -475,19 +677,31 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
     super(containerEl);
     this.mounted = null;
     this.generation = 0;
+    this.liveRegistered = false;
     this.plugin = plugin;
     this.sourcePath = sourcePath;
     this.config = config;
     this.file = file;
+  }
+  ensureLiveRegistration() {
+    if (this.liveRegistered) return;
+    this.liveRegistered = true;
+    this.register(
+      this.plugin.registerLiveApplet({
+        remount: () => this.render()
+      })
+    );
   }
   /** Obsidian embed registry calls this instead of onload(). */
   async loadFile(file) {
     if (file instanceof import_obsidian2.TFile) {
       this.file = file;
     }
+    this.ensureLiveRegistration();
     await this.render();
   }
   onload() {
+    this.ensureLiveRegistration();
     void this.render();
   }
   onunload() {
@@ -534,9 +748,12 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
           appName: this.config.appName,
           showToolBar: this.config.showToolBar,
           showAlgebraInput: this.config.showAlgebraInput,
+          showAlgebraView: this.config.showAlgebraView,
           showMenuBar: this.config.showMenuBar,
+          allowStyleBar: this.config.allowStyleBar,
           ggbBase64,
-          materialId
+          materialId,
+          saveFile: file ?? void 0
         },
         { plugin: this.plugin }
       );
@@ -571,6 +788,7 @@ var GeoGebraView = class extends import_obsidian3.FileView {
   constructor(leaf, plugin) {
     super(leaf);
     this.mounted = null;
+    this.remounting = false;
     this.plugin = plugin;
   }
   getViewType() {
@@ -581,6 +799,22 @@ var GeoGebraView = class extends import_obsidian3.FileView {
   }
   getIcon() {
     return "pyramid";
+  }
+  async onOpen() {
+    this.register(
+      this.plugin.registerLiveApplet({
+        remount: () => this.remountFromSettings()
+      })
+    );
+  }
+  async remountFromSettings() {
+    if (!this.file || this.remounting) return;
+    this.remounting = true;
+    try {
+      await this.onLoadFile(this.file);
+    } finally {
+      this.remounting = false;
+    }
   }
   async onLoadFile(file) {
     this.mounted?.revoke();
@@ -597,7 +831,8 @@ var GeoGebraView = class extends import_obsidian3.FileView {
         {
           settings: this.plugin.settings,
           ggbBase64: arrayBufferToBase64(data),
-          fillContainer: true
+          fillContainer: true,
+          saveFile: file
         },
         { plugin: this.plugin }
       );
@@ -623,6 +858,11 @@ var APP_NAME_OPTIONS = {
   geometry: "Geometry",
   "3d": "3D Calculator",
   suite: "Calculator Suite"
+};
+var ALGEBRA_VIEW_OPTIONS = {
+  auto: "Keep from .ggb file",
+  show: "Always show",
+  hide: "Always hide"
 };
 var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
@@ -659,14 +899,32 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
       },
       {
         name: "Show algebra input",
+        desc: "Bottom command input bar (not the left Algebra View panel)",
         control: { type: "toggle", key: "showAlgebraInput" }
       },
       {
+        name: "Algebra view panel",
+        desc: "Left object list panel; auto keeps the layout saved in the .ggb file",
+        control: {
+          type: "dropdown",
+          key: "showAlgebraView",
+          options: ALGEBRA_VIEW_OPTIONS,
+          defaultValue: DEFAULT_SETTINGS.showAlgebraView
+        }
+      },
+      {
         name: "Show menu bar",
+        desc: "Needed for View \u25B8 Algebra and Options \u25B8 Graphics at runtime",
         control: { type: "toggle", key: "showMenuBar" }
       },
       {
+        name: "Allow style bar",
+        desc: "Graphics style bar (axes / grid toggles); useful if context-menu grid dialog fails in webview",
+        control: { type: "toggle", key: "allowStyleBar" }
+      },
+      {
         name: "Enable right-click",
+        desc: "Often broken in Electron webview; prefer Allow style bar for axes/grid",
         control: { type: "toggle", key: "enableRightClick" }
       },
       {
@@ -676,6 +934,11 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
       {
         name: "Show reset icon",
         control: { type: "toggle", key: "showResetIcon" }
+      },
+      {
+        name: "Show save button",
+        desc: "Vertical Reset + Save under the style-bar toggle (local .ggb only)",
+        control: { type: "toggle", key: "showSaveButton" }
       },
       {
         name: "Attachment folder",
@@ -717,6 +980,7 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
     }
     if ((0, import_obsidian4.requireApiVersion)("1.13.0")) {
       await super.setControlValue(key, value);
+      this.plugin.notifySettingsChanged();
     }
   }
   /** Fallback for Obsidian before 1.13.0 */
@@ -746,19 +1010,37 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Show algebra input").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Show algebra input").setDesc("Bottom command input bar (not the left Algebra View panel)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showAlgebraInput).onChange(async (value) => {
         this.plugin.settings.showAlgebraInput = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Show menu bar").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Algebra view panel").setDesc("Left object list panel; auto keeps the layout saved in the .ggb file").addDropdown((dropdown) => {
+      dropdown.addOptions(ALGEBRA_VIEW_OPTIONS);
+      dropdown.setValue(this.plugin.settings.showAlgebraView ?? "auto");
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.showAlgebraView = value;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("Show menu bar").setDesc("Needed for View \u25B8 Algebra and Options \u25B8 Graphics at runtime").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showMenuBar).onChange(async (value) => {
         this.plugin.settings.showMenuBar = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Enable right-click").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Allow style bar").setDesc(
+      "Graphics style bar (axes / grid toggles); useful if context-menu grid dialog fails in webview"
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.allowStyleBar).onChange(async (value) => {
+        this.plugin.settings.allowStyleBar = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Enable right-click").setDesc(
+      "Often broken in Electron webview; prefer Allow style bar for axes/grid"
+    ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableRightClick).onChange(async (value) => {
         this.plugin.settings.enableRightClick = value;
         await this.plugin.saveSettings();
@@ -773,6 +1055,14 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
     new import_obsidian4.Setting(containerEl).setName("Show reset icon").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showResetIcon).onChange(async (value) => {
         this.plugin.settings.showResetIcon = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Show save button").setDesc(
+      "Vertical Reset + Save under the style-bar toggle (local .ggb only)"
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.showSaveButton).onChange(async (value) => {
+        this.plugin.settings.showSaveButton = value;
         await this.plugin.saveSettings();
       })
     );
@@ -802,6 +1092,9 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    /** Open GeoGebra views / embeds that should remount when settings change. */
+    this.liveApplets = /* @__PURE__ */ new Set();
+    this.refreshLiveTimer = null;
   }
   async onload() {
     await this.loadSettings();
@@ -858,16 +1151,62 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
       }
     });
     this.addSettingTab(new GeoGebraSettingTab(this.app, this));
+    this.register(() => {
+      if (this.refreshLiveTimer != null) {
+        window.clearTimeout(this.refreshLiveTimer);
+        this.refreshLiveTimer = null;
+      }
+      this.liveApplets.clear();
+    });
+  }
+  /** Register an open applet; returns unregister for Component.register(). */
+  registerLiveApplet(applet) {
+    this.liveApplets.add(applet);
+    return () => {
+      this.liveApplets.delete(applet);
+    };
   }
   async loadSettings() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      await this.loadData()
-    );
+    const loaded = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    if (this.settings.showAlgebraView !== "auto" && this.settings.showAlgebraView !== "show" && this.settings.showAlgebraView !== "hide") {
+      this.settings.showAlgebraView = DEFAULT_SETTINGS.showAlgebraView;
+    }
+    if (typeof this.settings.allowStyleBar !== "boolean") {
+      this.settings.allowStyleBar = DEFAULT_SETTINGS.allowStyleBar;
+    }
+    if (typeof this.settings.showSaveButton !== "boolean") {
+      this.settings.showSaveButton = DEFAULT_SETTINGS.showSaveButton;
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
+    this.scheduleRefreshLiveApplets();
+  }
+  /** After settings mutate outside saveSettings (e.g. declarative setControlValue). */
+  notifySettingsChanged() {
+    this.scheduleRefreshLiveApplets();
+  }
+  scheduleRefreshLiveApplets() {
+    if (this.refreshLiveTimer != null) {
+      window.clearTimeout(this.refreshLiveTimer);
+    }
+    this.refreshLiveTimer = window.setTimeout(() => {
+      this.refreshLiveTimer = null;
+      void this.refreshLiveApplets();
+    }, 150);
+  }
+  async refreshLiveApplets() {
+    const targets = [...this.liveApplets];
+    await Promise.all(
+      targets.map(async (applet) => {
+        try {
+          await applet.remount();
+        } catch (error) {
+          console.error("GeoGebra: remount after settings change failed", error);
+        }
+      })
+    );
   }
   mountCodeBlock(source, el, ctx) {
     const config = parseGeoGebraBlock(source);

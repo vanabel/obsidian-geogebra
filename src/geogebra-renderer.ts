@@ -18,6 +18,8 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 	private mounted: MountedApplet | null = null;
 	private generation = 0;
 
+	private liveRegistered = false;
+
 	constructor(
 		containerEl: HTMLElement,
 		plugin: GeoGebraPlugin,
@@ -32,15 +34,27 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 		this.file = file;
 	}
 
+	private ensureLiveRegistration(): void {
+		if (this.liveRegistered) return;
+		this.liveRegistered = true;
+		this.register(
+			this.plugin.registerLiveApplet({
+				remount: () => this.render(),
+			})
+		);
+	}
+
 	/** Obsidian embed registry calls this instead of onload(). */
 	async loadFile(file?: TFile): Promise<void> {
 		if (file instanceof TFile) {
 			this.file = file;
 		}
+		this.ensureLiveRegistration();
 		await this.render();
 	}
 
 	onload(): void {
+		this.ensureLiveRegistration();
 		void this.render();
 	}
 
@@ -95,9 +109,12 @@ export class GeoGebraRenderChild extends MarkdownRenderChild {
 					appName: this.config.appName,
 					showToolBar: this.config.showToolBar,
 					showAlgebraInput: this.config.showAlgebraInput,
+					showAlgebraView: this.config.showAlgebraView,
 					showMenuBar: this.config.showMenuBar,
+					allowStyleBar: this.config.allowStyleBar,
 					ggbBase64,
 					materialId,
+					saveFile: file ?? undefined,
 				},
 				{ plugin: this.plugin }
 			);

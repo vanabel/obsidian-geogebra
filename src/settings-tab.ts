@@ -16,6 +16,15 @@ const APP_NAME_OPTIONS: Record<GeoGebraPluginSettings["appName"], string> = {
 	suite: "Calculator Suite",
 };
 
+const ALGEBRA_VIEW_OPTIONS: Record<
+	GeoGebraPluginSettings["showAlgebraView"],
+	string
+> = {
+	auto: "Keep from .ggb file",
+	show: "Always show",
+	hide: "Always hide",
+};
+
 export class GeoGebraSettingTab extends PluginSettingTab {
 	plugin: GeoGebraPlugin;
 
@@ -54,14 +63,32 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 			},
 			{
 				name: "Show algebra input",
+				desc: "Bottom command input bar (not the left Algebra View panel)",
 				control: { type: "toggle", key: "showAlgebraInput" },
 			},
 			{
+				name: "Algebra view panel",
+				desc: "Left object list panel; auto keeps the layout saved in the .ggb file",
+				control: {
+					type: "dropdown",
+					key: "showAlgebraView",
+					options: ALGEBRA_VIEW_OPTIONS,
+					defaultValue: DEFAULT_SETTINGS.showAlgebraView,
+				},
+			},
+			{
 				name: "Show menu bar",
+				desc: "Needed for View ▸ Algebra and Options ▸ Graphics at runtime",
 				control: { type: "toggle", key: "showMenuBar" },
 			},
 			{
+				name: "Allow style bar",
+				desc: "Graphics style bar (axes / grid toggles); useful if context-menu grid dialog fails in webview",
+				control: { type: "toggle", key: "allowStyleBar" },
+			},
+			{
 				name: "Enable right-click",
+				desc: "Often broken in Electron webview; prefer Allow style bar for axes/grid",
 				control: { type: "toggle", key: "enableRightClick" },
 			},
 			{
@@ -71,6 +98,11 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 			{
 				name: "Show reset icon",
 				control: { type: "toggle", key: "showResetIcon" },
+			},
+			{
+				name: "Show save button",
+				desc: "Vertical Reset + Save under the style-bar toggle (local .ggb only)",
+				control: { type: "toggle", key: "showSaveButton" },
 			},
 			{
 				name: "Attachment folder",
@@ -115,6 +147,8 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 		}
 		if (requireApiVersion("1.13.0")) {
 			await super.setControlValue(key, value);
+			// Core may only saveData; remount open applets without plugin reload.
+			this.plugin.notifySettingsChanged();
 		}
 	}
 
@@ -165,6 +199,7 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Show algebra input")
+			.setDesc("Bottom command input bar (not the left Algebra View panel)")
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.showAlgebraInput)
@@ -175,7 +210,21 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Algebra view panel")
+			.setDesc("Left object list panel; auto keeps the layout saved in the .ggb file")
+			.addDropdown((dropdown) => {
+				dropdown.addOptions(ALGEBRA_VIEW_OPTIONS);
+				dropdown.setValue(this.plugin.settings.showAlgebraView ?? "auto");
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.showAlgebraView =
+						value as GeoGebraPluginSettings["showAlgebraView"];
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
 			.setName("Show menu bar")
+			.setDesc("Needed for View ▸ Algebra and Options ▸ Graphics at runtime")
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.showMenuBar)
@@ -186,7 +235,24 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Allow style bar")
+			.setDesc(
+				"Graphics style bar (axes / grid toggles); useful if context-menu grid dialog fails in webview"
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.allowStyleBar)
+					.onChange(async (value) => {
+						this.plugin.settings.allowStyleBar = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
 			.setName("Enable right-click")
+			.setDesc(
+				"Often broken in Electron webview; prefer Allow style bar for axes/grid"
+			)
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.enableRightClick)
@@ -214,6 +280,20 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showResetIcon)
 					.onChange(async (value) => {
 						this.plugin.settings.showResetIcon = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show save button")
+			.setDesc(
+				"Vertical Reset + Save under the style-bar toggle (local .ggb only)"
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showSaveButton)
+					.onChange(async (value) => {
+						this.plugin.settings.showSaveButton = value;
 						await this.plugin.saveSettings();
 					})
 			);

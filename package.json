@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-geogebra",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"description": "Embed interactive GeoGebra (.ggb) files via Electron webview (desktop).",
 	"main": "main.js",
 	"scripts": {

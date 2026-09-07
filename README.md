@@ -78,11 +78,13 @@ npm run dev
 
 ## 功能
 
-- 拖入 / 粘贴 `.ggb` → 自动保存到库并插入嵌入
+- 拖入 / 粘贴 `.ggb` → 自动保存到库并插入 `![[…]]` 嵌入（不是普通双向链接）
 - `![[demo.ggb]]` 维基嵌入（阅读视图 / 实时预览）
-- ` ```geogebra ` 代码块（可调高度、工具栏等）
-- 双击打开 `.ggb` 文件，在专用视图中交互
-- 也可嵌入已发布的 `material_id`
+- `ggb` / `geogebra` 代码块（高度、工具栏、代数区、样式栏等）
+- 在文件列表打开 `.ggb`，在专用视图中全屏交互
+- 本地构造可 **重置 / 保存** 写回 `.ggb`（图形区右上角竖排按钮）
+- 也可嵌入已发布的 `material_id`（远端材料不能直接覆盖保存）
+- 修改插件设置后，已打开的 applet **自动重挂载**，无需 Reload 插件
 
 ## 用法
 
@@ -115,6 +117,9 @@ file: GeoGebra/demo.ggb
 height: 520
 toolbar: true
 algebra: true
+algebraView: show
+menu: true
+styleBar: true
 app: classic
 ```
 ````
@@ -128,7 +133,24 @@ height: 480
 ```
 ````
 
-可用键：`file` / `material_id` / `height` / `width` / `app` / `toolbar` / `algebra` / `menu`。
+可用键：`file` / `material_id` / `height` / `width` / `app` / `toolbar` / `algebra`（底部输入栏）/ `algebraView`（`auto`|`show`|`hide` 左侧代数区）/ `menu` / `styleBar`。
+
+说明：
+
+- `algebra` = 底部命令输入行；`algebraView` = 左侧代数区（对象列表）。`auto` 表示保留 `.ggb` 文件里保存的布局。
+- 坐标轴 / 网格：请用图形区 **样式栏**（设置里默认开启 Allow style bar），或打开菜单栏后「选项 → 图形区」。右键菜单在 Electron webview 里经常不可用，**默认关闭右键**。
+- 运行时切换代数区：开菜单栏后用「视图 → 代数」，或在设置 / 代码块里设 `algebraView`。
+
+### 重置与保存
+
+本地 `.ggb`（维基嵌入、代码块、文件视图）在图形区右上角、「显示/隐藏样式栏」下方竖排：
+
+| 按钮 | 作用 |
+|------|------|
+| **重置** | `ggbApplet.reset()`，恢复到打开时的构造 |
+| **保存** | `getBase64()` 后写回库内原 `.ggb` 文件 |
+
+开启保存栏时会隐藏 GeoGebra 自带重置图标，避免重叠。可用设置 **Show save button** 关闭整组按钮。纯 `material_id` 远端材料没有本地文件可写，不显示该栏。
 
 ### 打开文件
 
@@ -136,18 +158,38 @@ height: 480
 
 ## 设置
 
-| 选项 | 说明 |
-|------|------|
-| Default height | 默认高度（px） |
-| App type | classic / graphing / geometry / 3d / suite |
-| Attachment folder | 拖入外部文件时的保存目录 |
-| deployggb.js URL | CDN 或自托管脚本地址 |
+修改下列与 applet 相关的选项后，当前已打开的视图 / 嵌入会自动按新设置重挂载（未点「保存」的画布改动会丢失）。
+
+| 选项 | 说明 | 默认 |
+|------|------|------|
+| Default height | 嵌入默认高度（px） | `640` |
+| App type | classic / graphing / geometry / 3d / suite | classic |
+| Show toolbar | 顶部工具栏 | 开 |
+| Show algebra input | 底部命令输入栏 | 开 |
+| Algebra view panel | 左侧代数区：`auto` 跟文件 / `show` / `hide` | auto |
+| Show menu bar | 菜单栏（视图 → 代数、选项 → 图形区等） | 关 |
+| Allow style bar | 图形区样式栏（坐标轴 / 网格等） | 开 |
+| Enable right-click | webview 里经常不可用；建议关，改用样式栏 | **关** |
+| Enable shift-drag zoom | Shift+拖动缩放 | 开 |
+| Show reset icon | GeoGebra 自带角标重置（开启保存栏时会被隐藏） | 开 |
+| Show save button | 样式栏下方竖排「重置 / 保存」 | 开 |
+| Attachment folder | 拖入外部 `.ggb` 时的保存目录 | `GeoGebra` |
+| Prefer wiki embed on drop | 拖入时插入 `![[…]]` 而非代码块 | 开 |
+| deployggb.js URL | CDN 或自托管 GeoGebra 加载脚本 | geogebra.org CDN |
 
 ## 说明
 
 - 桌面端通过 Electron `<webview>` 加载本地 runtime HTML（与 Excalidraw 外链嵌入、Copilot/Web Viewer 同一隔离模型），因此不受 Obsidian 页面 CSP 拦截 GeoGebra CDN 样式。
 - `.ggb` 数据留在本地；引擎 JS/CSS 仍从 `geogebra.org` 加载（需联网）。
 - `isDesktopOnly`：移动端暂不支持交互嵌入。
+- 插件目录名必须是 `geogebra`（与 `manifest.json` 的 `id` 一致），否则 Obsidian 不会正确加载。
+
+## 相对 0.3.3 的变更
+
+- 代数区面板设置（`showAlgebraView` / 代码块 `algebraView`）
+- 默认开启样式栏；默认关闭右键（webview 对话框不可靠）
+- 本地 `.ggb` 竖排 **重置 / 保存**，写回原文件
+- 改设置后自动重挂载已打开的 applet，无需 Reload 插件
 
 ## 许可
 

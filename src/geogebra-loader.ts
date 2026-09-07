@@ -1,6 +1,7 @@
 import {
 	App,
 	FileSystemAdapter,
+	Notice,
 	Platform,
 	Plugin,
 	TFile,
@@ -29,10 +30,14 @@ export interface AppletOptions {
 	appName?: GeoGebraPluginSettings["appName"];
 	showToolBar?: boolean;
 	showAlgebraInput?: boolean;
+	showAlgebraView?: "auto" | "show" | "hide";
 	showMenuBar?: boolean;
+	allowStyleBar?: boolean;
 	ggbBase64?: string;
 	materialId?: string;
 	fillContainer?: boolean;
+	/** Local vault file to overwrite when the user clicks Save. */
+	saveFile?: TFile;
 }
 
 export interface MountContext {
@@ -42,6 +47,11 @@ export interface MountContext {
 export interface MountedApplet {
 	el: HTMLElement;
 	revoke: () => void;
+	/** Export current construction as base64 .ggb (local applet only). */
+	getBase64: () => Promise<string>;
+	/** Write current construction back to saveFile, if available. */
+	save: () => Promise<void>;
+	canSave: boolean;
 }
 
 interface ElectronWebview extends HTMLElement {
@@ -79,6 +89,16 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 		binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
 	}
 	return btoa(binary);
+}
+
+export function base64ToArrayBuffer(b64: string): ArrayBuffer {
+	const cleaned = b64.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
+	const binary = atob(cleaned);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes.buffer;
 }
 
 export function resolvedHeight(
@@ -129,8 +149,20 @@ export async function mountGeoGebraApplet(
 		container.setCssProps({ "--geogebra-height": `${height}px` });
 	}
 
+	const canSave = Boolean(options.saveFile && options.settings.showSaveButton);
+	/** Host chrome owns Reset when Save is shown, so hide GeoGebra's corner reset icon. */
+	const hostOwnsReset = canSave;
+	const effectiveOptions: AppletOptions = hostOwnsReset
+		? {
+				...options,
+				settings: { ...options.settings, showResetIcon: false },
+			}
+		: options;
+
 	const status = container.createDiv({ cls: "geogebra-status geogebra-status-overlay" });
 	status.setText("正在加载 GeoGebra…");
+
+	const stage = container.createDiv({ cls: "geogebra-stage" });
 
 	const webview = createWebviewElement();
 	if (!webview) {
@@ -145,7 +177,7 @@ export async function mountGeoGebraApplet(
 		"webpreferences",
 		"autoplayPolicy=document-user-activation-required"
 	);
-	container.appendChild(webview);
+	stage.appendChild(webview);
 
 	await new Promise<void>((resolve) =>
 		window.requestAnimationFrame(() =>
@@ -154,19 +186,18 @@ export async function mountGeoGebraApplet(
 	);
 
 	const measure = (): { w: number; h: number } => {
+		const box = stage;
 		const w = Math.max(
-			Math.floor(
-				container.clientWidth || container.getBoundingClientRect().width
-			),
+			Math.floor(box.clientWidth || box.getBoundingClientRect().width),
 			320
 		);
 		const h = Math.max(
 			Math.floor(
-				container.clientHeight ||
-					container.getBoundingClientRect().height ||
+				box.clientHeight ||
+					box.getBoundingClientRect().height ||
 					height
 			),
-			height
+			120
 		);
 		return { w, h };
 	};
@@ -226,28 +257,188 @@ export async function mountGeoGebraApplet(
 	};
 
 	const ro = new ResizeObserver(() => syncSize());
-	ro.observe(container);
+	ro.observe(stage);
 	cleanups.push(() => ro.disconnect());
 
-	if (options.materialId && !options.ggbBase64) {
-		webview.src = buildMaterialEmbedUrl(
-			options.materialId,
-			boxW,
-			boxH,
-			options
+	const getBase64 = async (): Promise<string> => {
+		if (revoked || !webview.isConnected) {
+			throw new Error("GeoGebra 已卸载，无法导出");
+		}
+		const result = await webview.executeJavaScript(
+			`(function () {
+  return new Promise(function (resolve, reject) {
+    try {
+      var api = window.ggbApplet;
+      if (!api || typeof api.getBase64 !== "function") {
+        reject(new Error("GeoGebra API 尚未就绪"));
+        return;
+      }
+      var done = false;
+      var finish = function (value) {
+        if (done) return;
+        done = true;
+        if (typeof value === "string" && value.length > 0) resolve(value);
+        else reject(new Error("getBase64 返回为空"));
+      };
+      try {
+        api.getBase64(function (b64) { finish(b64); });
+      } catch (err) {
+        try {
+          finish(api.getBase64());
+        } catch (err2) {
+          reject(err2);
+        }
+      }
+      window.setTimeout(function () {
+        if (!done) reject(new Error("导出 .ggb 超时"));
+      }, 20000);
+    } catch (e) {
+      reject(e);
+    }
+  });
+})()`,
+			true
 		);
-		wireWebviewReady(webview, markReady, cleanups, () => revoked);
+		if (typeof result !== "string" || !result) {
+			throw new Error("无法导出当前构造");
+		}
+		return result;
+	};
+
+	const reset = async (): Promise<void> => {
+		if (revoked || !webview.isConnected) {
+			throw new Error("GeoGebra 已卸载，无法重置");
+		}
+		await webview.executeJavaScript(
+			`(function () {
+  var api = window.ggbApplet;
+  if (!api || typeof api.reset !== "function") {
+    throw new Error("GeoGebra API 尚未就绪");
+  }
+  api.reset();
+  return true;
+})()`,
+			true
+		);
+	};
+
+	const save = async (): Promise<void> => {
+		const file = options.saveFile;
+		if (!file) {
+			throw new Error("当前嵌入没有可写入的本地 .ggb 文件（远端 material 无法直接覆盖）");
+		}
+		const b64 = await getBase64();
+		const buffer = base64ToArrayBuffer(b64);
+		await ctx.plugin.app.vault.modifyBinary(file, buffer);
+	};
+
+	const attachSideActions = () => {
+		if (!canSave) return;
+		/** Vertical stack under GeoGebra's style-bar toggle (graphics top-right). */
+		const actions = container.createDiv({ cls: "geogebra-side-actions" });
+		actions.setAttr(
+			"title",
+			"位于「显示/隐藏样式栏」下方：重置与保存"
+		);
+
+		const resetBtn = actions.createEl("button", {
+			cls: "geogebra-action-btn",
+			text: "重置",
+			attr: {
+				type: "button",
+				title: "恢复到打开时的构造（与 GeoGebra 重置图标相同）",
+			},
+		});
+		const saveBtn = actions.createEl("button", {
+			cls: "geogebra-action-btn",
+			text: "保存",
+			attr: {
+				type: "button",
+				title: `保存到 ${options.saveFile?.path ?? ".ggb"}`,
+			},
+		});
+
+		let busy = false;
+		const run = (
+			btn: HTMLButtonElement,
+			label: string,
+			work: () => Promise<void>,
+			okText: string,
+			okNotice: string
+		) => {
+			btn.addEventListener("click", (evt) => {
+				evt.preventDefault();
+				evt.stopPropagation();
+				if (busy) return;
+				busy = true;
+				resetBtn.disabled = true;
+				saveBtn.disabled = true;
+				btn.setText(`${label}中…`);
+				void (async () => {
+					try {
+						await work();
+						new Notice(okNotice);
+						btn.setText(okText);
+						window.setTimeout(() => {
+							if (btn.isConnected) btn.setText(label);
+						}, 1200);
+					} catch (error) {
+						const message =
+							error instanceof Error ? error.message : String(error);
+						new Notice(`GeoGebra ${label}失败: ${message}`);
+						btn.setText(label);
+					} finally {
+						busy = false;
+						if (resetBtn.isConnected) resetBtn.disabled = false;
+						if (saveBtn.isConnected) saveBtn.disabled = false;
+					}
+				})();
+			});
+		};
+
+		run(
+			resetBtn,
+			"重置",
+			reset,
+			"已重置",
+			`GeoGebra: 已重置 ${options.saveFile?.name ?? ""}`
+		);
+		run(
+			saveBtn,
+			"保存",
+			save,
+			"已保存",
+			`GeoGebra: 已保存 ${options.saveFile?.name ?? ""}`
+		);
+	};
+
+	const finishMount = (): MountedApplet => {
+		attachSideActions();
 		return {
 			el: webview,
+			getBase64,
+			save,
+			canSave,
 			revoke: () => {
 				revoked = true;
 				runCleanups(cleanups);
 				webview.remove();
 			},
 		};
+	};
+
+	if (effectiveOptions.materialId && !effectiveOptions.ggbBase64) {
+		webview.src = buildMaterialEmbedUrl(
+			effectiveOptions.materialId,
+			boxW,
+			boxH,
+			effectiveOptions
+		);
+		wireWebviewReady(webview, markReady, cleanups, () => revoked);
+		return finishMount();
 	}
 
-	const html = buildAppletHtml(options, boxW, boxH);
+	const html = buildAppletHtml(effectiveOptions, boxW, boxH);
 	const runtime = await writeRuntimeHtml(ctx.plugin, adapter, html);
 	cleanups.push(runtime.cleanup);
 
@@ -257,14 +448,7 @@ export async function mountGeoGebraApplet(
 	const safety = window.setTimeout(() => markReady(), 8000);
 	cleanups.push(() => window.clearTimeout(safety));
 
-	return {
-		el: webview,
-		revoke: () => {
-			revoked = true;
-			runCleanups(cleanups);
-			webview.remove();
-		},
-	};
+	return finishMount();
 }
 
 /** @deprecated use mountGeoGebraApplet */
@@ -405,6 +589,10 @@ function buildAppletHtml(
 	height: number
 ): string {
 	const { settings } = options;
+	const showAlgebraView =
+		options.showAlgebraView ?? settings.showAlgebraView;
+	const allowStyleBar = options.allowStyleBar ?? settings.allowStyleBar;
+
 	const params: Record<string, unknown> = {
 		appName: options.appName ?? settings.appName,
 		width,
@@ -412,12 +600,14 @@ function buildAppletHtml(
 		showToolBar: options.showToolBar ?? settings.showToolBar,
 		showAlgebraInput: options.showAlgebraInput ?? settings.showAlgebraInput,
 		showMenuBar: options.showMenuBar ?? settings.showMenuBar,
+		allowStyleBar,
 		enableRightClick: settings.enableRightClick,
 		enableShiftDragZoom: settings.enableShiftDragZoom,
+		enableLabelDrags: true,
 		showResetIcon: settings.showResetIcon,
+		errorDialogsActive: true,
 		language: "zh",
 		preventFocus: false,
-		borderColor: null,
 		autoHeight: false,
 	};
 
@@ -430,6 +620,8 @@ function buildAppletHtml(
 
 	const scriptUrl = JSON.stringify(settings.deployScriptUrl);
 	const paramsJson = JSON.stringify(params);
+	const algebraViewJson = JSON.stringify(showAlgebraView);
+	const enableRightClickJson = JSON.stringify(!!settings.enableRightClick);
 	const fallbackW = JSON.stringify(width);
 	const fallbackH = JSON.stringify(height);
 
@@ -486,13 +678,34 @@ function buildAppletHtml(
       }
     } catch (e) {}
   }
+  function applyUi(api) {
+    if (!api) return;
+    try {
+      if (typeof api.enableRightClick === "function") {
+        api.enableRightClick(${enableRightClickJson});
+      }
+    } catch (e) {}
+    var algebraView = ${algebraViewJson};
+    if (algebraView === "show" || algebraView === "hide") {
+      try {
+        if (typeof api.setPerspective === "function") {
+          api.setPerspective(algebraView === "show" ? "+A" : "-A");
+        } else if (typeof api.evalCommand === "function") {
+          api.evalCommand(algebraView === "show" ? 'SetPerspective("+A")' : 'SetPerspective("-A")');
+        }
+      } catch (e) {}
+    }
+  }
   try {
     var params = ${paramsJson};
     var initial = hostSize();
     params.width = Math.max(initial.w, ${fallbackW});
     params.height = Math.max(initial.h, ${fallbackH});
     params.appletOnLoad = function (api) {
+      applyUi(api);
       applySize(api);
+      window.setTimeout(function () { applyUi(api); applySize(api); }, 0);
+      window.setTimeout(function () { applyUi(api); applySize(api); }, 250);
       document.documentElement.setAttribute("data-ggb-ready", "1");
     };
     if (typeof GGBApplet !== "function") {

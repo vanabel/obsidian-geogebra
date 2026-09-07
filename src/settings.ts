@@ -3,11 +3,21 @@ export interface GeoGebraPluginSettings {
 	width: number | "100%";
 	appName: "classic" | "graphing" | "geometry" | "3d" | "suite";
 	showToolBar: boolean;
+	/** Bottom input bar (命令输入行), not the left Algebra View panel. */
 	showAlgebraInput: boolean;
+	/**
+	 * Left Algebra View panel (对象列表).
+	 * Applied after load via setPerspective("+A" / "-A").
+	 * `auto` keeps whatever the .ggb file saved.
+	 */
+	showAlgebraView: "auto" | "show" | "hide";
 	showMenuBar: boolean;
+	allowStyleBar: boolean;
 	enableRightClick: boolean;
 	enableShiftDragZoom: boolean;
 	showResetIcon: boolean;
+	/** Show floating Save button that writes current construction back to the .ggb file. */
+	showSaveButton: boolean;
 	attachmentFolder: string;
 	deployScriptUrl: string;
 	preferWikiEmbed: boolean;
@@ -19,10 +29,13 @@ export const DEFAULT_SETTINGS: GeoGebraPluginSettings = {
 	appName: "classic",
 	showToolBar: true,
 	showAlgebraInput: true,
+	showAlgebraView: "auto",
 	showMenuBar: false,
-	enableRightClick: true,
+	allowStyleBar: true,
+	enableRightClick: false,
 	enableShiftDragZoom: true,
 	showResetIcon: true,
+	showSaveButton: true,
 	attachmentFolder: "GeoGebra",
 	deployScriptUrl: "https://www.geogebra.org/apps/deployggb.js",
 	preferWikiEmbed: true,
@@ -36,7 +49,9 @@ export interface ParsedGeoGebraBlock {
 	appName?: GeoGebraPluginSettings["appName"];
 	showToolBar?: boolean;
 	showAlgebraInput?: boolean;
+	showAlgebraView?: "auto" | "show" | "hide";
 	showMenuBar?: boolean;
+	allowStyleBar?: boolean;
 }
 
 export function stripWikiTarget(value: string): string {
@@ -48,6 +63,17 @@ export function stripWikiTarget(value: string): string {
 		.split("|")[0]
 		.split("#")[0]
 		.trim();
+}
+
+function parseBool(value: string): boolean {
+	return value.toLowerCase() !== "false" && value !== "0";
+}
+
+function parseAlgebraView(value: string): "auto" | "show" | "hide" {
+	const v = value.trim().toLowerCase();
+	if (v === "auto" || v === "default" || v === "file" || v === "") return "auto";
+	if (v === "false" || v === "0" || v === "off" || v === "hide") return "hide";
+	return "show";
 }
 
 export function parseGeoGebraBlock(source: string): ParsedGeoGebraBlock {
@@ -98,15 +124,26 @@ export function parseGeoGebraBlock(source: string): ParsedGeoGebraBlock {
 				break;
 			case "toolbar":
 			case "showtoolbar":
-				result.showToolBar = value.toLowerCase() !== "false";
+				result.showToolBar = parseBool(value);
 				break;
 			case "algebra":
+			case "algebrainput":
 			case "showalgebrainput":
-				result.showAlgebraInput = value.toLowerCase() !== "false";
+				result.showAlgebraInput = parseBool(value);
+				break;
+			case "algebraview":
+			case "showalgebraview":
+			case "algebra_panel":
+				result.showAlgebraView = parseAlgebraView(value);
 				break;
 			case "menu":
 			case "showmenubar":
-				result.showMenuBar = value.toLowerCase() !== "false";
+				result.showMenuBar = parseBool(value);
+				break;
+			case "stylebar":
+			case "allowstylebar":
+			case "showstylebar":
+				result.allowStyleBar = parseBool(value);
 				break;
 		}
 	}

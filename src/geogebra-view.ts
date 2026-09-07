@@ -11,6 +11,7 @@ export const GEOGEBRA_VIEW_TYPE = "geogebra-view";
 export class GeoGebraView extends FileView {
 	plugin: GeoGebraPlugin;
 	private mounted: MountedApplet | null = null;
+	private remounting = false;
 
 	constructor(leaf: WorkspaceLeaf, plugin: GeoGebraPlugin) {
 		super(leaf);
@@ -27,6 +28,24 @@ export class GeoGebraView extends FileView {
 
 	getIcon(): string {
 		return "pyramid";
+	}
+
+	async onOpen(): Promise<void> {
+		this.register(
+			this.plugin.registerLiveApplet({
+				remount: () => this.remountFromSettings(),
+			})
+		);
+	}
+
+	private async remountFromSettings(): Promise<void> {
+		if (!this.file || this.remounting) return;
+		this.remounting = true;
+		try {
+			await this.onLoadFile(this.file);
+		} finally {
+			this.remounting = false;
+		}
 	}
 
 	async onLoadFile(file: TFile): Promise<void> {
@@ -48,6 +67,7 @@ export class GeoGebraView extends FileView {
 					settings: this.plugin.settings,
 					ggbBase64: arrayBufferToBase64(data),
 					fillContainer: true,
+					saveFile: file,
 				},
 				{ plugin: this.plugin }
 			);
