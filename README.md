@@ -6,15 +6,18 @@
 
 ## 安装
 
+> 插件 id 为 `geogebra`，安装目录必须是 `.obsidian/plugins/geogebra/`。  
+> 若你之前装过 `obsidian-geogebra` 目录，请删掉旧目录后按下面重装（设置不会自动迁移）。
+
 ### 手动安装（推荐）
 
 1. 打开 [Releases](https://github.com/vanabel/obsidian-geogebra/releases)，下载最新版的：
-   - `obsidian-geogebra-x.y.z.zip`，**或**
+   - `geogebra-x.y.z.zip`，**或**
    - `main.js`、`manifest.json`、`styles.css` 三个文件
 2. 解压 / 复制到你的库：
 
 ```text
-你的库/.obsidian/plugins/obsidian-geogebra/
+你的库/.obsidian/plugins/geogebra/
 ```
 
 3. Obsidian → 设置 → 社区插件 → 关闭安全模式 → 刷新 → 启用 **GeoGebra**。
@@ -40,13 +43,14 @@ npm install
 npm run build
 ```
 
-2. 把插件目录链到你的 vault（或复制构建产物）：
+2. 把构建产物放到 vault（目录名必须是 `geogebra`）：
 
 ```bash
-# 推荐：符号链接整个开发目录
-ln -s "/绝对路径/obsidian-geogebra" \
-  "/你的库/.obsidian/plugins/obsidian-geogebra"
+mkdir -p "/你的库/.obsidian/plugins/geogebra"
+cp main.js manifest.json styles.css "/你的库/.obsidian/plugins/geogebra/"
 ```
+
+或符号链接开发目录到 `plugins/geogebra`（链接名也要是 `geogebra`）。
 
 确保该目录里有：
 
@@ -63,6 +67,10 @@ npm run dev
 ```
 
 改代码后会自动重新打包 `main.js`，在 Obsidian 里用「重新加载应用」或禁用/启用插件即可。
+
+### 提交官方社区目录
+
+仓库与 Release 准备好后，到 [community.obsidian.md](https://community.obsidian.md) 登录 → 绑定 GitHub → 添加本仓库。详见 [Submit your plugin](https://docs.obsidian.md/Plugins/Releasing/Submit+your+plugin)。
 
 ## 功能
 

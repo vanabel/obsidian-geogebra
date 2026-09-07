@@ -1,7 +1,7 @@
 {
-	"id": "obsidian-geogebra",
+	"id": "geogebra",
 	"name": "GeoGebra",
-	"version": "0.2.8",
+	"version": "0.2.9",
 	"minAppVersion": "1.5.0",
 	"description": "Drag .ggb files into notes and interact with GeoGebra constructions inline.",
 	"author": "vanabel",
