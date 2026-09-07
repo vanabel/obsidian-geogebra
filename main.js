@@ -625,7 +625,6 @@ var GeoGebraSettingTab = class extends import_obsidian4.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian4.Setting(containerEl).setName("GeoGebra").setHeading();
     new import_obsidian4.Setting(containerEl).setName("Default height").setDesc("Applet height in pixels").addText(
       (text) => text.setPlaceholder("500").setValue(String(this.plugin.settings.height)).onChange(async (value) => {
         const n = Number(value);
@@ -732,12 +731,26 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     this.registerReadingFallback();
     this.registerEvent(
       this.app.workspace.on("editor-drop", (evt, editor, info) => {
-        void this.onEditorDropOrPaste(evt, editor, info);
+        if (evt.defaultPrevented) return;
+        if (!this.eventHasGgb(evt)) return;
+        if (this.settings.preferWikiEmbed) {
+          this.scheduleEmbedPromotion(editor);
+          return;
+        }
+        evt.preventDefault();
+        void this.insertCodeBlocksFromEvent(evt, editor, info);
       })
     );
     this.registerEvent(
       this.app.workspace.on("editor-paste", (evt, editor, info) => {
-        void this.onEditorDropOrPaste(evt, editor, info);
+        if (evt.defaultPrevented) return;
+        if (!this.eventHasGgb(evt)) return;
+        if (this.settings.preferWikiEmbed) {
+          this.scheduleEmbedPromotion(editor);
+          return;
+        }
+        evt.preventDefault();
+        void this.insertCodeBlocksFromEvent(evt, editor, info);
       })
     );
     this.addCommand({
@@ -822,16 +835,6 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
         );
       }
     });
-  }
-  onEditorDropOrPaste(evt, editor, info) {
-    if (evt.defaultPrevented) return;
-    if (!this.eventHasGgb(evt)) return;
-    if (this.settings.preferWikiEmbed) {
-      this.scheduleEmbedPromotion(editor);
-      return;
-    }
-    evt.preventDefault();
-    void this.insertCodeBlocksFromEvent(evt, editor, info);
   }
   eventHasGgb(evt) {
     if (this.externalGgbFiles(evt).length > 0) return true;

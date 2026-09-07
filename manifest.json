@@ -1,7 +1,7 @@
 {
 	"id": "geogebra",
 	"name": "GeoGebra",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"minAppVersion": "1.5.0",
 	"description": "Drag .ggb files into notes and interact with GeoGebra constructions inline.",
 	"author": "vanabel",

@@ -63,12 +63,26 @@ export default class GeoGebraPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.workspace.on("editor-drop", (evt, editor, info) => {
-				void this.onEditorDropOrPaste(evt, editor, info);
+				if (evt.defaultPrevented) return;
+				if (!this.eventHasGgb(evt)) return;
+				if (this.settings.preferWikiEmbed) {
+					this.scheduleEmbedPromotion(editor);
+					return;
+				}
+				evt.preventDefault();
+				void this.insertCodeBlocksFromEvent(evt, editor, info);
 			})
 		);
 		this.registerEvent(
 			this.app.workspace.on("editor-paste", (evt, editor, info) => {
-				void this.onEditorDropOrPaste(evt, editor, info);
+				if (evt.defaultPrevented) return;
+				if (!this.eventHasGgb(evt)) return;
+				if (this.settings.preferWikiEmbed) {
+					this.scheduleEmbedPromotion(editor);
+					return;
+				}
+				evt.preventDefault();
+				void this.insertCodeBlocksFromEvent(evt, editor, info);
 			})
 		);
 
@@ -176,23 +190,6 @@ export default class GeoGebraPlugin extends Plugin {
 				);
 			}
 		});
-	}
-
-	private onEditorDropOrPaste(
-		evt: DragEvent | ClipboardEvent,
-		editor: Editor,
-		info: MarkdownView | MarkdownFileInfo
-	): void {
-		if (evt.defaultPrevented) return;
-		if (!this.eventHasGgb(evt)) return;
-
-		if (this.settings.preferWikiEmbed) {
-			this.scheduleEmbedPromotion(editor);
-			return;
-		}
-
-		evt.preventDefault();
-		void this.insertCodeBlocksFromEvent(evt, editor, info);
 	}
 
 	private eventHasGgb(evt: DragEvent | ClipboardEvent): boolean {

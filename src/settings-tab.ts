@@ -14,8 +14,6 @@ export class GeoGebraSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl).setName("GeoGebra").setHeading();
-
 		new Setting(containerEl)
 			.setName("Default height")
 			.setDesc("Applet height in pixels")
