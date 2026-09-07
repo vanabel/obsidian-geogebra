@@ -822,11 +822,11 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
       this.app.workspace.on("editor-drop", (evt, editor, info) => {
         if (evt.defaultPrevented) return;
         if (!this.eventHasGgb(evt)) return;
+        evt.preventDefault();
         if (this.settings.preferWikiEmbed) {
-          this.scheduleEmbedPromotion(editor);
+          void this.insertWikiEmbedsFromEvent(evt, editor, info);
           return;
         }
-        evt.preventDefault();
         void this.insertCodeBlocksFromEvent(evt, editor, info);
       })
     );
@@ -834,11 +834,11 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
       this.app.workspace.on("editor-paste", (evt, editor, info) => {
         if (evt.defaultPrevented) return;
         if (!this.eventHasGgb(evt)) return;
+        evt.preventDefault();
         if (this.settings.preferWikiEmbed) {
-          this.scheduleEmbedPromotion(editor);
+          void this.insertWikiEmbedsFromEvent(evt, editor, info);
           return;
         }
-        evt.preventDefault();
         void this.insertCodeBlocksFromEvent(evt, editor, info);
       })
     );
@@ -933,24 +933,7 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     }
     return false;
   }
-  scheduleEmbedPromotion(editor) {
-    const startLine = Math.max(0, editor.getCursor().line - 2);
-    window.setTimeout(() => {
-      const endLine = Math.min(editor.lastLine(), editor.getCursor().line + 2);
-      for (let i = startLine; i <= endLine; i++) {
-        const line = editor.getLine(i);
-        const next = line.replace(
-          /(?<!!)\[\[([^[\]]+\.ggb(?:\|[^\]]*)?)\]\]/gi,
-          "![[$1]]"
-        );
-        if (next !== line) {
-          editor.setLine(i, next);
-        }
-      }
-    }, 0);
-  }
-  async insertCodeBlocksFromEvent(evt, editor, info) {
-    const sourcePath = info instanceof import_obsidian5.MarkdownView ? info.file?.path ?? "" : "";
+  async collectGgbPathsFromEvent(evt, sourcePath) {
     const paths = [];
     if (evt instanceof DragEvent) {
       paths.push(...this.extractInternalGgbPaths(evt));
@@ -966,10 +949,31 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
         new import_obsidian5.Notice(`GeoGebra: ${message}`);
       }
     }
-    for (const path of [...new Set(paths)]) {
-      editor.replaceSelection(
-        ["```ggb", path, "```", ""].join("\n")
-      );
+    return [...new Set(paths)];
+  }
+  linktextForPath(path, sourcePath) {
+    const file = this.app.vault.getAbstractFileByPath((0, import_obsidian5.normalizePath)(path));
+    if (file instanceof import_obsidian5.TFile) {
+      return this.app.metadataCache.fileToLinktext(file, sourcePath);
+    }
+    return path;
+  }
+  async insertWikiEmbedsFromEvent(evt, editor, info) {
+    const sourcePath = info instanceof import_obsidian5.MarkdownView ? info.file?.path ?? "" : info.file?.path ?? "";
+    const paths = await this.collectGgbPathsFromEvent(evt, sourcePath);
+    if (paths.length === 0) {
+      new import_obsidian5.Notice("GeoGebra: \u672A\u627E\u5230\u53EF\u63D2\u5165\u7684 .ggb \u6587\u4EF6");
+      return;
+    }
+    const snippet = paths.map((path) => `![[${this.linktextForPath(path, sourcePath)}]]`).join("\n");
+    editor.replaceSelection(snippet.endsWith("\n") ? snippet : `${snippet}
+`);
+  }
+  async insertCodeBlocksFromEvent(evt, editor, info) {
+    const sourcePath = info instanceof import_obsidian5.MarkdownView ? info.file?.path ?? "" : info.file?.path ?? "";
+    const paths = await this.collectGgbPathsFromEvent(evt, sourcePath);
+    for (const path of paths) {
+      editor.replaceSelection(["```ggb", path, "```", ""].join("\n"));
     }
   }
   externalGgbFiles(evt) {

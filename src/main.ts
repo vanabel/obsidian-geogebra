@@ -65,11 +65,11 @@ export default class GeoGebraPlugin extends Plugin {
 			this.app.workspace.on("editor-drop", (evt, editor, info) => {
 				if (evt.defaultPrevented) return;
 				if (!this.eventHasGgb(evt)) return;
+				evt.preventDefault();
 				if (this.settings.preferWikiEmbed) {
-					this.scheduleEmbedPromotion(editor);
+					void this.insertWikiEmbedsFromEvent(evt, editor, info);
 					return;
 				}
-				evt.preventDefault();
 				void this.insertCodeBlocksFromEvent(evt, editor, info);
 			})
 		);
@@ -77,11 +77,11 @@ export default class GeoGebraPlugin extends Plugin {
 			this.app.workspace.on("editor-paste", (evt, editor, info) => {
 				if (evt.defaultPrevented) return;
 				if (!this.eventHasGgb(evt)) return;
+				evt.preventDefault();
 				if (this.settings.preferWikiEmbed) {
-					this.scheduleEmbedPromotion(editor);
+					void this.insertWikiEmbedsFromEvent(evt, editor, info);
 					return;
 				}
-				evt.preventDefault();
 				void this.insertCodeBlocksFromEvent(evt, editor, info);
 			})
 		);
@@ -201,30 +201,10 @@ export default class GeoGebraPlugin extends Plugin {
 		return false;
 	}
 
-	private scheduleEmbedPromotion(editor: Editor): void {
-		const startLine = Math.max(0, editor.getCursor().line - 2);
-		window.setTimeout(() => {
-			const endLine = Math.min(editor.lastLine(), editor.getCursor().line + 2);
-			for (let i = startLine; i <= endLine; i++) {
-				const line = editor.getLine(i);
-				const next = line.replace(
-					/(?<!!)\[\[([^[\]]+\.ggb(?:\|[^\]]*)?)\]\]/gi,
-					"![[$1]]"
-				);
-				if (next !== line) {
-					editor.setLine(i, next);
-				}
-			}
-		}, 0);
-	}
-
-	private async insertCodeBlocksFromEvent(
+	private async collectGgbPathsFromEvent(
 		evt: DragEvent | ClipboardEvent,
-		editor: Editor,
-		info: MarkdownView | MarkdownFileInfo
-	): Promise<void> {
-		const sourcePath =
-			info instanceof MarkdownView ? (info.file?.path ?? "") : "";
+		sourcePath: string
+	): Promise<string[]> {
 		const paths: string[] = [];
 
 		if (evt instanceof DragEvent) {
@@ -242,10 +222,51 @@ export default class GeoGebraPlugin extends Plugin {
 			}
 		}
 
-		for (const path of [...new Set(paths)]) {
-			editor.replaceSelection(
-				["```ggb", path, "```", ""].join("\n")
-			);
+		return [...new Set(paths)];
+	}
+
+	private linktextForPath(path: string, sourcePath: string): string {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+		if (file instanceof TFile) {
+			return this.app.metadataCache.fileToLinktext(file, sourcePath);
+		}
+		return path;
+	}
+
+	private async insertWikiEmbedsFromEvent(
+		evt: DragEvent | ClipboardEvent,
+		editor: Editor,
+		info: MarkdownView | MarkdownFileInfo
+	): Promise<void> {
+		const sourcePath =
+			info instanceof MarkdownView
+				? (info.file?.path ?? "")
+				: ((info as MarkdownFileInfo).file?.path ?? "");
+		const paths = await this.collectGgbPathsFromEvent(evt, sourcePath);
+		if (paths.length === 0) {
+			new Notice("GeoGebra: 未找到可插入的 .ggb 文件");
+			return;
+		}
+
+		const snippet = paths
+			.map((path) => `![[${this.linktextForPath(path, sourcePath)}]]`)
+			.join("\n");
+		editor.replaceSelection(snippet.endsWith("\n") ? snippet : `${snippet}\n`);
+	}
+
+	private async insertCodeBlocksFromEvent(
+		evt: DragEvent | ClipboardEvent,
+		editor: Editor,
+		info: MarkdownView | MarkdownFileInfo
+	): Promise<void> {
+		const sourcePath =
+			info instanceof MarkdownView
+				? (info.file?.path ?? "")
+				: ((info as MarkdownFileInfo).file?.path ?? "");
+		const paths = await this.collectGgbPathsFromEvent(evt, sourcePath);
+
+		for (const path of paths) {
+			editor.replaceSelection(["```ggb", path, "```", ""].join("\n"));
 		}
 	}
 
