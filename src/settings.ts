@@ -46,12 +46,115 @@ export interface ParsedGeoGebraBlock {
 	materialId?: string;
 	height?: number;
 	width?: number | string;
+	caption?: string;
 	appName?: GeoGebraPluginSettings["appName"];
 	showToolBar?: boolean;
 	showAlgebraInput?: boolean;
 	showAlgebraView?: "auto" | "show" | "hide";
 	showMenuBar?: boolean;
 	allowStyleBar?: boolean;
+}
+
+/** Image-like wiki alias: `400`, `400x300`, `caption`, or `400|caption`. */
+export function parseEmbedDisplay(display: string): Pick<
+	ParsedGeoGebraBlock,
+	"width" | "height" | "caption"
+> {
+	const result: Pick<ParsedGeoGebraBlock, "width" | "height" | "caption"> = {};
+	const parts = display
+		.split("|")
+		.map((part) => part.trim())
+		.filter(Boolean);
+	const sizeRe = /^(\d{2,4})(?:\s*[x×]\s*(\d{2,4}))?$/i;
+
+	for (const part of parts) {
+		const match = part.match(sizeRe);
+		if (match && result.width === undefined) {
+			result.width = Number(match[1]);
+			if (match[2]) {
+				result.height = Number(match[2]);
+			}
+			continue;
+		}
+		if (!result.caption) {
+			result.caption = part;
+		} else {
+			result.caption = `${result.caption}|${part}`;
+		}
+	}
+	return result;
+}
+
+/**
+ * Read size/caption from an Obsidian embed element.
+ * Live Preview often puts the wiki alias in `alt` (possibly after first paint);
+ * Reading view may keep `path|alias` in `src`.
+ */
+export function parseEmbedElementAttrs(
+	el: HTMLElement
+): Pick<ParsedGeoGebraBlock, "width" | "height" | "caption"> {
+	const candidates: string[] = [];
+
+	const src = el.getAttribute("src") ?? "";
+	const pipe = src.indexOf("|");
+	if (pipe >= 0) {
+		candidates.push(src.slice(pipe + 1).trim());
+	}
+
+	const alt = (el.getAttribute("alt") ?? "").trim();
+	if (alt) candidates.push(alt);
+
+	const widthAttr = (el.getAttribute("width") ?? "").trim();
+	const heightAttr = (el.getAttribute("height") ?? "").trim();
+	if (widthAttr && heightAttr && /^\d+$/.test(widthAttr) && /^\d+$/.test(heightAttr)) {
+		candidates.push(`${widthAttr}x${heightAttr}`);
+	} else if (widthAttr && /^\d+$/.test(widthAttr)) {
+		candidates.push(widthAttr);
+	}
+
+	for (const display of candidates) {
+		const parsed = parseEmbedDisplay(display);
+		if (
+			parsed.width !== undefined ||
+			parsed.height !== undefined ||
+			parsed.caption !== undefined
+		) {
+			return parsed;
+		}
+	}
+	return {};
+}
+
+/**
+ * Fallback: read displayText from metadata cache for `![[file|…]]`.
+ * If the same file is embedded multiple times, prefers an alias that looks like a size.
+ */
+export function findEmbedDisplayInCache(
+	app: { metadataCache: { getCache: (path: string) => { embeds?: Array<{ link: string; displayText?: string }> } | null; getFirstLinkpathDest: (link: string, path: string) => { path: string } | null } },
+	sourcePath: string,
+	filePath: string
+): string | undefined {
+	const cache = app.metadataCache.getCache(sourcePath);
+	const embeds = cache?.embeds;
+	if (!embeds?.length) return undefined;
+
+	const matches: string[] = [];
+	for (const embed of embeds) {
+		const dest = app.metadataCache.getFirstLinkpathDest(embed.link, sourcePath);
+		if (!dest || dest.path !== filePath) continue;
+		const display = embed.displayText?.trim();
+		if (!display || display === embed.link) continue;
+		// Skip when displayText is just the basename without alias.
+		const base = filePath.split("/").pop() ?? filePath;
+		if (display === base || display === filePath) continue;
+		matches.push(display);
+	}
+	if (!matches.length) return undefined;
+
+	const sized = matches.find((m) =>
+		/^(\d{2,4})(\s*[x×]\s*\d{2,4})?(\s*\|.*)?$/i.test(m)
+	);
+	return sized ?? matches[0];
 }
 
 export function stripWikiTarget(value: string): string {
@@ -109,6 +212,11 @@ export function parseGeoGebraBlock(source: string): ParsedGeoGebraBlock {
 				break;
 			case "width":
 				result.width = value === "100%" ? "100%" : Number(value) || value;
+				break;
+			case "caption":
+			case "title":
+			case "label":
+				result.caption = value;
 				break;
 			case "app":
 			case "appname":

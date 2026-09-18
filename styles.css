@@ -1,7 +1,9 @@
 .geogebra-embed {
-	display: block;
+	display: flex;
+	flex-direction: column;
 	box-sizing: border-box;
 	width: 100%;
+	max-width: 100%;
 	margin: 0.5em 0;
 	overflow: hidden;
 	border: 1px solid var(--background-modifier-border);
@@ -10,9 +12,21 @@
 	position: relative;
 }
 
-.geogebra-embed-fixed {
+.geogebra-embed-sized {
+	width: var(--geogebra-width, 100%) !important;
+	max-width: 100% !important;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+.geogebra-embed-fixed:not(.geogebra-has-caption) {
 	height: var(--geogebra-height, 640px);
 	min-height: var(--geogebra-height, 640px);
+}
+
+.geogebra-embed-fixed.geogebra-has-caption {
+	height: auto;
+	min-height: 0;
 }
 
 .geogebra-embed-fill {
@@ -22,9 +36,15 @@
 
 span.internal-embed.geogebra-embed,
 .internal-embed.geogebra-embed {
-	display: block;
+	display: flex;
 	width: 100%;
 	max-width: 100%;
+}
+
+span.internal-embed.geogebra-embed.geogebra-embed-sized,
+.internal-embed.geogebra-embed.geogebra-embed-sized {
+	width: var(--geogebra-width, 100%) !important;
+	max-width: 100% !important;
 }
 
 /*
@@ -69,10 +89,31 @@ span.internal-embed.geogebra-embed,
 	color: var(--text-error);
 }
 
-/* Webview fills the embed; host chrome sits above it. */
+/* Stage owns the applet box; caption sits below when present. */
 .geogebra-stage {
-	position: absolute;
-	inset: 0;
+	position: relative;
+	flex: 0 0 auto;
+	width: 100%;
+	height: var(--geogebra-height, 640px);
+	min-height: var(--geogebra-height, 640px);
+	background: #fff;
+}
+
+.geogebra-embed-fill .geogebra-stage {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: 100%;
+}
+
+.geogebra-caption {
+	flex: 0 0 auto;
+	padding: 0.45em 0.75em 0.65em;
+	text-align: center;
+	color: var(--text-muted);
+	font-size: var(--font-smaller);
+	line-height: 1.35;
+	background: var(--background-primary);
+	border-top: 1px solid var(--background-modifier-border);
 }
 
 /*

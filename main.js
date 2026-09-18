@@ -53,6 +53,71 @@ var DEFAULT_SETTINGS = {
   deployScriptUrl: "https://www.geogebra.org/apps/deployggb.js",
   preferWikiEmbed: true
 };
+function parseEmbedDisplay(display) {
+  const result = {};
+  const parts = display.split("|").map((part) => part.trim()).filter(Boolean);
+  const sizeRe = /^(\d{2,4})(?:\s*[x×]\s*(\d{2,4}))?$/i;
+  for (const part of parts) {
+    const match = part.match(sizeRe);
+    if (match && result.width === void 0) {
+      result.width = Number(match[1]);
+      if (match[2]) {
+        result.height = Number(match[2]);
+      }
+      continue;
+    }
+    if (!result.caption) {
+      result.caption = part;
+    } else {
+      result.caption = `${result.caption}|${part}`;
+    }
+  }
+  return result;
+}
+function parseEmbedElementAttrs(el) {
+  const candidates = [];
+  const src = el.getAttribute("src") ?? "";
+  const pipe = src.indexOf("|");
+  if (pipe >= 0) {
+    candidates.push(src.slice(pipe + 1).trim());
+  }
+  const alt = (el.getAttribute("alt") ?? "").trim();
+  if (alt) candidates.push(alt);
+  const widthAttr = (el.getAttribute("width") ?? "").trim();
+  const heightAttr = (el.getAttribute("height") ?? "").trim();
+  if (widthAttr && heightAttr && /^\d+$/.test(widthAttr) && /^\d+$/.test(heightAttr)) {
+    candidates.push(`${widthAttr}x${heightAttr}`);
+  } else if (widthAttr && /^\d+$/.test(widthAttr)) {
+    candidates.push(widthAttr);
+  }
+  for (const display of candidates) {
+    const parsed = parseEmbedDisplay(display);
+    if (parsed.width !== void 0 || parsed.height !== void 0 || parsed.caption !== void 0) {
+      return parsed;
+    }
+  }
+  return {};
+}
+function findEmbedDisplayInCache(app, sourcePath, filePath) {
+  const cache = app.metadataCache.getCache(sourcePath);
+  const embeds = cache?.embeds;
+  if (!embeds?.length) return void 0;
+  const matches = [];
+  for (const embed of embeds) {
+    const dest = app.metadataCache.getFirstLinkpathDest(embed.link, sourcePath);
+    if (!dest || dest.path !== filePath) continue;
+    const display = embed.displayText?.trim();
+    if (!display || display === embed.link) continue;
+    const base = filePath.split("/").pop() ?? filePath;
+    if (display === base || display === filePath) continue;
+    matches.push(display);
+  }
+  if (!matches.length) return void 0;
+  const sized = matches.find(
+    (m) => /^(\d{2,4})(\s*[x×]\s*\d{2,4})?(\s*\|.*)?$/i.test(m)
+  );
+  return sized ?? matches[0];
+}
 function stripWikiTarget(value) {
   return value.trim().replace(/^!/, "").replace(/^\[\[/, "").replace(/\]\]$/, "").split("|")[0].split("#")[0].trim();
 }
@@ -95,6 +160,11 @@ function parseGeoGebraBlock(source) {
         break;
       case "width":
         result.width = value === "100%" ? "100%" : Number(value) || value;
+        break;
+      case "caption":
+      case "title":
+      case "label":
+        result.caption = value;
         break;
       case "app":
       case "appname":
@@ -166,16 +236,64 @@ function base64ToArrayBuffer(b64) {
   }
   return bytes.buffer;
 }
-function resolvedHeight(options) {
-  return options.height ?? options.settings.height;
+function resolvedWidth(options) {
+  const raw = options.width ?? options.settings.width;
+  if (raw === "100%" || raw === void 0 || raw === null || raw === "") {
+    return "100%";
+  }
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  const asNum = Number(raw);
+  if (Number.isFinite(asNum) && asNum > 0) {
+    return asNum;
+  }
+  return "100%";
 }
-function parseHeightHint(el, fallback) {
-  const attr = el.getAttribute("height") || el.getAttribute("alt") || el.getAttribute("width");
-  if (!attr) return fallback;
-  const match = attr.match(/(\d{2,4})/);
-  if (!match) return fallback;
-  const value = Number(match[1]);
-  return Number.isFinite(value) && value > 80 ? value : fallback;
+function resolveEmbedBox(config) {
+  const rawW = config.width;
+  const rawH = config.height;
+  const hasExplicitWidth = rawW !== void 0 && rawW !== null && rawW !== "" && rawW !== "100%";
+  const hasExplicitHeight = rawH !== void 0 && Number(rawH) > 0 && Number.isFinite(Number(rawH));
+  let width;
+  if (hasExplicitWidth) {
+    const n = typeof rawW === "number" ? rawW : Number(rawW);
+    width = Number.isFinite(n) && n > 0 ? n : "100%";
+  } else {
+    width = resolvedWidth({
+      width: rawW,
+      settings: config.settings
+    });
+  }
+  let height;
+  if (hasExplicitHeight) {
+    height = Number(rawH);
+  } else if (typeof width === "number") {
+    height = width;
+  } else {
+    height = config.settings.height;
+  }
+  return { width, height };
+}
+function applyEmbedBoxSize(container, width, height, fillContainer = false) {
+  if (fillContainer) {
+    container.addClass("geogebra-embed-fill");
+    container.removeClass("geogebra-embed-fixed");
+    container.removeClass("geogebra-embed-sized");
+    container.setCssProps({
+      "--geogebra-height": "100%",
+      "--geogebra-width": "100%"
+    });
+    return;
+  }
+  container.addClass("geogebra-embed-fixed");
+  container.removeClass("geogebra-embed-fill");
+  const sized = typeof width === "number";
+  container.toggleClass("geogebra-embed-sized", sized);
+  container.setCssProps({
+    "--geogebra-height": `${height}px`,
+    "--geogebra-width": sized ? `${width}px` : "100%"
+  });
 }
 async function mountGeoGebraApplet(container, options, ctx) {
   if (!import_obsidian.Platform.isDesktopApp) {
@@ -187,18 +305,11 @@ async function mountGeoGebraApplet(container, options, ctx) {
   if (!(adapter instanceof import_obsidian.FileSystemAdapter)) {
     throw new Error("\u5F53\u524D vault \u4E0D\u662F\u672C\u5730\u6587\u4EF6\u7CFB\u7EDF\uFF0C\u65E0\u6CD5\u521B\u5EFA GeoGebra runtime\u3002");
   }
-  const height = resolvedHeight(options);
+  const height = resolveEmbedBox(options).height;
+  const width = resolveEmbedBox(options).width;
   container.empty();
   container.addClass("geogebra-embed");
-  if (options.fillContainer) {
-    container.addClass("geogebra-embed-fill");
-    container.removeClass("geogebra-embed-fixed");
-    container.setCssProps({ "--geogebra-height": "100%" });
-  } else {
-    container.addClass("geogebra-embed-fixed");
-    container.removeClass("geogebra-embed-fill");
-    container.setCssProps({ "--geogebra-height": `${height}px` });
-  }
+  applyEmbedBoxSize(container, width, height, Boolean(options.fillContainer));
   const canSave = Boolean(options.saveFile && options.settings.showSaveButton);
   const hostOwnsReset = canSave;
   const effectiveOptions = hostOwnsReset ? {
@@ -228,9 +339,10 @@ async function mountGeoGebraApplet(container, options, ctx) {
   );
   const measure = () => {
     const box = stage;
+    const minW = typeof width === "number" ? 80 : 320;
     const w = Math.max(
       Math.floor(box.clientWidth || box.getBoundingClientRect().width),
-      320
+      minW
     );
     const h = Math.max(
       Math.floor(
@@ -672,12 +784,17 @@ function buildAppletHtml(options, width, height) {
 }
 
 // src/geogebra-renderer.ts
+function sizeKey(config) {
+  return `${config.width ?? ""}x${config.height ?? ""}:${config.caption ?? ""}`;
+}
 var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
   constructor(containerEl, plugin, sourcePath, config, file) {
     super(containerEl);
     this.mounted = null;
     this.generation = 0;
     this.liveRegistered = false;
+    this.attrObserver = null;
+    this.lastSizeKey = "";
     this.plugin = plugin;
     this.sourcePath = sourcePath;
     this.config = config;
@@ -692,16 +809,38 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
       })
     );
   }
+  ensureAttrWatch() {
+    if (this.attrObserver) return;
+    this.attrObserver = new MutationObserver(() => {
+      const next = sizeKey(this.effectiveConfig());
+      if (next === this.lastSizeKey) return;
+      void this.render();
+    });
+    this.attrObserver.observe(this.containerEl, {
+      attributes: true,
+      attributeFilter: ["src", "alt", "width", "height"]
+    });
+    this.register(() => {
+      this.attrObserver?.disconnect();
+      this.attrObserver = null;
+    });
+  }
   /** Obsidian embed registry calls this instead of onload(). */
   async loadFile(file) {
     if (file instanceof import_obsidian2.TFile) {
       this.file = file;
     }
     this.ensureLiveRegistration();
+    this.ensureAttrWatch();
     await this.render();
+    window.setTimeout(() => {
+      const next = sizeKey(this.effectiveConfig());
+      if (next !== this.lastSizeKey) void this.render();
+    }, 50);
   }
   onload() {
     this.ensureLiveRegistration();
+    this.ensureAttrWatch();
     void this.render();
   }
   onunload() {
@@ -709,27 +848,53 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
     this.mounted?.revoke();
     this.mounted = null;
   }
+  /**
+   * Code-block config wins; wiki `src`/`alt` and metadata displayText fill gaps.
+   */
+  effectiveConfig() {
+    const fromEl = parseEmbedElementAttrs(this.containerEl);
+    let fromCache = {};
+    const filePath = this.file?.path ?? this.config.file;
+    if (filePath) {
+      const display = findEmbedDisplayInCache(
+        this.plugin.app,
+        this.sourcePath,
+        filePath
+      );
+      if (display) {
+        fromCache = parseEmbedDisplay(display);
+      }
+    }
+    return {
+      ...fromCache,
+      ...fromEl,
+      ...this.config,
+      width: this.config.width ?? fromEl.width ?? fromCache.width,
+      height: this.config.height ?? fromEl.height ?? fromCache.height,
+      caption: this.config.caption ?? fromEl.caption ?? fromCache.caption
+    };
+  }
   async render() {
     const token = ++this.generation;
     this.mounted?.revoke();
     this.mounted = null;
+    const config = this.effectiveConfig();
+    this.lastSizeKey = sizeKey(config);
     this.containerEl.empty();
     this.containerEl.addClass("geogebra-embed");
-    this.containerEl.addClass("geogebra-embed-fixed");
-    const height = parseHeightHint(
-      this.containerEl,
-      resolvedHeight({
-        height: this.config.height,
-        settings: this.plugin.settings
-      })
-    );
-    this.containerEl.setCssProps({ "--geogebra-height": `${height}px` });
+    this.containerEl.removeClass("geogebra-has-caption");
+    const { width, height } = resolveEmbedBox({
+      width: config.width,
+      height: config.height,
+      settings: this.plugin.settings
+    });
+    applyEmbedBoxSize(this.containerEl, width, height);
     const status = this.containerEl.createDiv({ cls: "geogebra-status" });
     status.setText("\u6B63\u5728\u52A0\u8F7D GeoGebra\u2026");
     try {
-      const file = this.file ?? this.resolveFile();
+      const file = this.file ?? this.resolveFile(config);
       let ggbBase64;
-      const materialId = this.config.materialId;
+      const materialId = config.materialId;
       if (file) {
         this.file = file;
         const data = await this.plugin.app.vault.readBinary(file);
@@ -744,13 +909,13 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
         {
           settings: this.plugin.settings,
           height,
-          width: this.config.width,
-          appName: this.config.appName,
-          showToolBar: this.config.showToolBar,
-          showAlgebraInput: this.config.showAlgebraInput,
-          showAlgebraView: this.config.showAlgebraView,
-          showMenuBar: this.config.showMenuBar,
-          allowStyleBar: this.config.allowStyleBar,
+          width,
+          appName: config.appName,
+          showToolBar: config.showToolBar,
+          showAlgebraInput: config.showAlgebraInput,
+          showAlgebraView: config.showAlgebraView,
+          showMenuBar: config.showMenuBar,
+          allowStyleBar: config.allowStyleBar,
           ggbBase64,
           materialId,
           saveFile: file ?? void 0
@@ -760,6 +925,15 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
       if (token !== this.generation) {
         this.mounted.revoke();
         this.mounted = null;
+        return;
+      }
+      const caption = config.caption?.trim();
+      if (caption) {
+        this.containerEl.addClass("geogebra-has-caption");
+        this.containerEl.createDiv({
+          cls: "geogebra-caption",
+          text: caption
+        });
       }
     } catch (error) {
       if (token !== this.generation) return;
@@ -769,11 +943,11 @@ var GeoGebraRenderChild = class extends import_obsidian2.MarkdownRenderChild {
       new import_obsidian2.Notice(`GeoGebra: ${message}`);
     }
   }
-  resolveFile() {
-    if (this.config.file) {
+  resolveFile(config) {
+    if (config.file) {
       return resolveGgbFile(
         this.plugin.app,
-        this.config.file,
+        config.file,
         this.sourcePath
       );
     }
@@ -1226,11 +1400,12 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
     } catch {
     }
     embedRegistry.registerExtension("ggb", (ctx, file) => {
+      const fromEl = parseEmbedElementAttrs(ctx.containerEl);
       return new GeoGebraRenderChild(
         ctx.containerEl,
         this,
         ctx.sourcePath ?? file.path,
-        { file: file.path },
+        { file: file.path, ...fromEl },
         file
       );
     });
@@ -1247,19 +1422,21 @@ var GeoGebraPlugin = class extends import_obsidian5.Plugin {
       for (const span of Array.from(embeds)) {
         if (!span.instanceOf(HTMLElement)) continue;
         if (span.querySelector(".geogebra-webview, .geogebra-status")) continue;
-        const src = (span.getAttribute("src") ?? "").split("|")[0].trim();
+        const rawSrc = span.getAttribute("src") ?? "";
+        const src = rawSrc.split("|")[0].trim();
         if (!src.toLowerCase().endsWith(".ggb")) continue;
         const file = this.app.metadataCache.getFirstLinkpathDest(
           src,
           ctx.sourcePath
         );
         if (!(file instanceof import_obsidian5.TFile)) continue;
+        const fromEl = parseEmbedElementAttrs(span);
         ctx.addChild(
           new GeoGebraRenderChild(
             span,
             this,
             ctx.sourcePath,
-            { file: file.path },
+            { file: file.path, ...fromEl },
             file
           )
         );

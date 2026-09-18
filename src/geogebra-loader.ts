@@ -107,16 +107,99 @@ export function resolvedHeight(
 	return options.height ?? options.settings.height;
 }
 
+export function resolvedWidth(
+	options: Pick<AppletOptions, "width" | "settings">
+): number | "100%" {
+	const raw = options.width ?? options.settings.width;
+	if (raw === "100%" || raw === undefined || raw === null || raw === "") {
+		return "100%";
+	}
+	if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+		return raw;
+	}
+	const asNum = Number(raw);
+	if (Number.isFinite(asNum) && asNum > 0) {
+		return asNum;
+	}
+	return "100%";
+}
+
+/**
+ * Resolve final box size.
+ * Image-like: `![[file|200]]` sets width only → height defaults to the same
+ * value (square), not the plugin default height (e.g. 640).
+ */
+export function resolveEmbedBox(
+	config: Pick<AppletOptions, "width" | "height" | "settings">
+): { width: number | "100%"; height: number } {
+	const rawW = config.width;
+	const rawH = config.height;
+	const hasExplicitWidth =
+		rawW !== undefined &&
+		rawW !== null &&
+		rawW !== "" &&
+		rawW !== "100%";
+	const hasExplicitHeight =
+		rawH !== undefined && Number(rawH) > 0 && Number.isFinite(Number(rawH));
+
+	let width: number | "100%";
+	if (hasExplicitWidth) {
+		const n = typeof rawW === "number" ? rawW : Number(rawW);
+		width = Number.isFinite(n) && n > 0 ? n : "100%";
+	} else {
+		width = resolvedWidth({
+			width: rawW,
+			settings: config.settings,
+		});
+	}
+
+	let height: number;
+	if (hasExplicitHeight) {
+		height = Number(rawH);
+	} else if (typeof width === "number") {
+		height = width;
+	} else {
+		height = config.settings.height;
+	}
+
+	return { width, height };
+}
+
+/** Prefer an explicit height attribute only (do not treat width/alt as height). */
 export function parseHeightHint(el: HTMLElement, fallback: number): number {
-	const attr =
-		el.getAttribute("height") ||
-		el.getAttribute("alt") ||
-		el.getAttribute("width");
+	const attr = el.getAttribute("height");
 	if (!attr) return fallback;
 	const match = attr.match(/(\d{2,4})/);
 	if (!match) return fallback;
 	const value = Number(match[1]);
 	return Number.isFinite(value) && value > 80 ? value : fallback;
+}
+
+export function applyEmbedBoxSize(
+	container: HTMLElement,
+	width: number | "100%",
+	height: number,
+	fillContainer = false
+): void {
+	if (fillContainer) {
+		container.addClass("geogebra-embed-fill");
+		container.removeClass("geogebra-embed-fixed");
+		container.removeClass("geogebra-embed-sized");
+		container.setCssProps({
+			"--geogebra-height": "100%",
+			"--geogebra-width": "100%",
+		});
+		return;
+	}
+
+	container.addClass("geogebra-embed-fixed");
+	container.removeClass("geogebra-embed-fill");
+	const sized = typeof width === "number";
+	container.toggleClass("geogebra-embed-sized", sized);
+	container.setCssProps({
+		"--geogebra-height": `${height}px`,
+		"--geogebra-width": sized ? `${width}px` : "100%",
+	});
 }
 
 export async function mountGeoGebraApplet(
@@ -135,19 +218,12 @@ export async function mountGeoGebraApplet(
 		throw new Error("当前 vault 不是本地文件系统，无法创建 GeoGebra runtime。");
 	}
 
-	const height = resolvedHeight(options);
+	const height = resolveEmbedBox(options).height;
+	const width = resolveEmbedBox(options).width;
 
 	container.empty();
 	container.addClass("geogebra-embed");
-	if (options.fillContainer) {
-		container.addClass("geogebra-embed-fill");
-		container.removeClass("geogebra-embed-fixed");
-		container.setCssProps({ "--geogebra-height": "100%" });
-	} else {
-		container.addClass("geogebra-embed-fixed");
-		container.removeClass("geogebra-embed-fill");
-		container.setCssProps({ "--geogebra-height": `${height}px` });
-	}
+	applyEmbedBoxSize(container, width, height, Boolean(options.fillContainer));
 
 	const canSave = Boolean(options.saveFile && options.settings.showSaveButton);
 	/** Host chrome owns Reset when Save is shown, so hide GeoGebra's corner reset icon. */
@@ -187,9 +263,10 @@ export async function mountGeoGebraApplet(
 
 	const measure = (): { w: number; h: number } => {
 		const box = stage;
+		const minW = typeof width === "number" ? 80 : 320;
 		const w = Math.max(
 			Math.floor(box.clientWidth || box.getBoundingClientRect().width),
-			320
+			minW
 		);
 		const h = Math.max(
 			Math.floor(

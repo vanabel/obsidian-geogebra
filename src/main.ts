@@ -12,6 +12,7 @@ import { GeoGebraRenderChild } from "./geogebra-renderer";
 import { GEOGEBRA_VIEW_TYPE, GeoGebraView } from "./geogebra-view";
 import {
 	DEFAULT_SETTINGS,
+	parseEmbedElementAttrs,
 	type GeoGebraPluginSettings,
 	parseGeoGebraBlock,
 } from "./settings";
@@ -207,11 +208,12 @@ export default class GeoGebraPlugin extends Plugin {
 		}
 
 		embedRegistry.registerExtension("ggb", (ctx, file) => {
+			const fromEl = parseEmbedElementAttrs(ctx.containerEl);
 			return new GeoGebraRenderChild(
 				ctx.containerEl,
 				this,
 				ctx.sourcePath ?? file.path,
-				{ file: file.path },
+				{ file: file.path, ...fromEl },
 				file
 			);
 		});
@@ -232,7 +234,8 @@ export default class GeoGebraPlugin extends Plugin {
 				if (!span.instanceOf(HTMLElement)) continue;
 				if (span.querySelector(".geogebra-webview, .geogebra-status")) continue;
 
-				const src = (span.getAttribute("src") ?? "").split("|")[0].trim();
+				const rawSrc = span.getAttribute("src") ?? "";
+				const src = rawSrc.split("|")[0].trim();
 				if (!src.toLowerCase().endsWith(".ggb")) continue;
 
 				const file = this.app.metadataCache.getFirstLinkpathDest(
@@ -241,12 +244,13 @@ export default class GeoGebraPlugin extends Plugin {
 				);
 				if (!(file instanceof TFile)) continue;
 
+				const fromEl = parseEmbedElementAttrs(span);
 				ctx.addChild(
 					new GeoGebraRenderChild(
 						span,
 						this,
 						ctx.sourcePath,
-						{ file: file.path },
+						{ file: file.path, ...fromEl },
 						file
 					)
 				);

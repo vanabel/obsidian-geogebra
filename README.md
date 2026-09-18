@@ -80,7 +80,8 @@ npm run dev
 
 - 拖入 / 粘贴 `.ggb` → 自动保存到库并插入 `![[…]]` 嵌入（不是普通双向链接）
 - `![[demo.ggb]]` 维基嵌入（阅读视图 / 实时预览）
-- `ggb` / `geogebra` 代码块（高度、工具栏、代数区、样式栏等）
+- 维基嵌入支持图片式尺寸与标题：`![[demo.ggb|400]]`、`![[demo.ggb|400x300]]`、`![[demo.ggb|400|密克圆]]`
+- `ggb` / `geogebra` 代码块（宽高、caption、工具栏、代数区、样式栏等）
 - 在文件列表打开 `.ggb`，在专用视图中全屏交互
 - 本地构造可 **重置 / 保存** 写回 `.ggb`（图形区右上角竖排按钮）
 - 也可嵌入已发布的 `material_id`（远端材料不能直接覆盖保存）
@@ -99,6 +100,23 @@ npm run dev
 
 拖入 / 粘贴 `.ggb` 时插件会拦截默认行为，直接插入 `![[文件名.ggb]]`（嵌入，不是双向链接 `[[...]]`）。
 
+### 维基嵌入尺寸与标题
+
+用法对齐 Obsidian 图片：
+
+```markdown
+![[demo.ggb]]
+![[demo.ggb|400]]
+![[demo.ggb|400x300]]
+![[demo.ggb|400|密克圆]]
+![[demo.ggb|密克圆]]
+```
+
+- `|400`：宽度 400px；未写高度时按 **正方形**（高=宽），不再用默认 640
+- `|400x300`：宽 × 高
+- 非数字片段当作 **caption**，显示在 applet 下方
+- 可组合：`|400|标题` 或 `|400x300|标题`
+
 ### 代码块
 
 代码块里可以直接写文件名：
@@ -114,7 +132,9 @@ GGB-14-01-01-密克圆-三角形.ggb
 ````markdown
 ```geogebra
 file: GeoGebra/demo.ggb
-height: 520
+width: 400
+height: 300
+caption: 密克圆
 toolbar: true
 algebra: true
 algebraView: show
@@ -130,10 +150,11 @@ app: classic
 ```geogebra
 material_id: RHYH3UQ8
 height: 480
+caption: 示例材料
 ```
 ````
 
-可用键：`file` / `material_id` / `height` / `width` / `app` / `toolbar` / `algebra`（底部输入栏）/ `algebraView`（`auto`|`show`|`hide` 左侧代数区）/ `menu` / `styleBar`。
+可用键：`file` / `material_id` / `height` / `width` / `caption` / `app` / `toolbar` / `algebra`（底部输入栏）/ `algebraView`（`auto`|`show`|`hide` 左侧代数区）/ `menu` / `styleBar`。
 
 说明：
 
@@ -184,12 +205,11 @@ height: 480
 - `isDesktopOnly`：移动端暂不支持交互嵌入。
 - 插件目录名必须是 `geogebra`（与 `manifest.json` 的 `id` 一致），否则 Obsidian 不会正确加载。
 
-## 相对 0.3.3 的变更
+## 相对 0.3.5 的变更
 
-- 代数区面板设置（`showAlgebraView` / 代码块 `algebraView`）
-- 默认开启样式栏；默认关闭右键（webview 对话框不可靠）
-- 本地 `.ggb` 竖排 **重置 / 保存**，写回原文件
-- 改设置后自动重挂载已打开的 applet，无需 Reload 插件
+- 维基嵌入支持 `|400` / `|400x300` / caption（与图片用法对齐）
+- 代码块 `width` 真正作用于布局；新增 `caption` / `title`
+- applet 下方可显示标题文字
 
 ## 许可
 
